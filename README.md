@@ -1,6 +1,6 @@
 # PINNacle: A Comprehensive Benchmark of Physics-Informed Neural Networks for Solving PDEs
 
-This repository is our codebase for [PINNacle: A Comprehensive Benchmark of Physics-Informed Neural Networks for Solving PDEs](https://arxiv.org/abs/2306.08827). Our paper is currently under review. We will provide more detailed guide soon.
+This repository is our codebase for [PINNacle: A Comprehensive Benchmark of Physics-Informed Neural Networks for Solving PDEs](https://arxiv.org/abs/2306.08827). Our paper is accepted to **NeurIPS 2024**! 🎉
 
 <p align="center">
   <img width="80%" src="https://raw.githubusercontent.com/i207M/PINNacle/master/resources/pinnacle.png"/>
