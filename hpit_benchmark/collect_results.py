@@ -44,6 +44,7 @@ GNOT_CSV      = RESULTS_DIR / "gnot_results.csv"
 DEEPONET_CSV  = RESULTS_DIR / "deeponet_results.csv"
 PINO_CSV      = RESULTS_DIR / "pino_results.csv"
 MAMBA_NO_CSV  = RESULTS_DIR / "mamba_no_results.csv"
+FBPINN_CSV    = RESULTS_DIR / "fbpinn_results.csv"
 PINNACLE_RUNS_DIR = BENCHMARK_DIR.parent / "runs"
 
 OUT_MD = RESULTS_DIR / "unified_results.md"
@@ -72,6 +73,7 @@ _MODEL_CSVS = {
     "DeepONet": DEEPONET_CSV,
     "PINO":     PINO_CSV,
     "Mamba-NO": MAMBA_NO_CSV,
+    "FBPINN":   FBPINN_CSV,
 }
 
 
