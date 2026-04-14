@@ -1,0 +1,11 @@
+pde,model,l2rel,run_time_seconds,notes
+HeatComplexGeometry,DeepONet,1.008863,0.96,dry_run
+Burgers1D,DeepONet,1.008398,0.01,dry_run
+Burgers2D,DeepONet,1.002538,0.01,dry_run
+KuramotoSivashinsky,DeepONet,1.003471,0.01,dry_run
+NavierStokes2D,DeepONet,1.009123,0.02,dry_run
+Burgers1D,DeepONet,1.067448,0.97,dry_run
+HeatComplexGeometry,DeepONet,1.020658,0.01,dry_run
+KuramotoSivashinsky,DeepONet,1.036620,0.01,dry_run
+NavierStokes2D,DeepONet,1.011171,0.02,dry_run
+Burgers2D,DeepONet,1.003582,0.01,dry_run
