@@ -89,21 +89,21 @@ Invoke-Step "pip install scipy einops --quiet"
 # NOTE: benchmark.py does not accept --dry-run; use --iter for fast runs.
 # ============================================================
 Write-Step "STEP 2: PINNacle Vanilla PINN (Adam, $ITER iter)"
-Invoke-Step "python benchmark.py --name vanilla_pinn --method adam --iter $ITER"
+Invoke-Step "python3 benchmark.py --name vanilla_pinn --method adam --iter $ITER"
 
 # ============================================================
 # STEP 3 — PINNacle: PINN with Learning-Rate Annealing (LRA)
 # (~50 min full / <1 min dry)
 # ============================================================
 Write-Step "STEP 3: PINNacle PINN-LRA ($ITER iter)"
-Invoke-Step "python benchmark.py --name pinn_lra --method lra --iter $ITER"
+Invoke-Step "python3 benchmark.py --name pinn_lra --method lra --iter $ITER"
 
 # ============================================================
 # STEP 4 — PINNacle: Residual-Adaptive Refinement (RAR)
 # (~55 min full / <1 min dry)
 # ============================================================
 Write-Step "STEP 4: PINNacle RAR ($ITER iter)"
-Invoke-Step "python benchmark.py --name rar --method rar --iter $ITER"
+Invoke-Step "python3 benchmark.py --name rar --method rar --iter $ITER"
 
 # ============================================================
 # STEP 5 — FBPINN: one run per PDE
@@ -136,7 +136,7 @@ if ($DRY_RUN) {
         $script = $FBPINN_MAP[$pde]
         if (Test-Path "runs/$script") {
             Write-Host "  Running FBPINN on $pde ($script)..."
-            Invoke-Step "python runs/$script"
+            Invoke-Step "python3 runs/$script"
         } else {
             Write-Host "  WARNING: FBPINN script not found for ${pde}: runs/$script" -ForegroundColor Yellow
         }
@@ -150,35 +150,35 @@ if ($DRY_RUN) {
 # (~1 hr full / ~30 s dry)
 # ============================================================
 Write-Step "STEP 6: FNO PDE benchmark"
-Invoke-Step "python hpit_benchmark/fno_benchmark.py $DRY_FLAG"
+Invoke-Step "python3 hpit_benchmark/fno_benchmark.py $DRY_FLAG"
 
 # ============================================================
 # STEP 7 — GNOT benchmark (all 5 PDEs, PINNacle data)
 # (~1 hr full / ~30 s dry)
 # ============================================================
 Write-Step "STEP 7: GNOT PDE benchmark"
-Invoke-Step "python hpit_benchmark/gnot_benchmark.py $DRY_FLAG"
+Invoke-Step "python3 hpit_benchmark/gnot_benchmark.py $DRY_FLAG"
 
 # ============================================================
 # STEP 8 — DeepONet benchmark (all 5 PDEs, PINNacle data)
 # (~1 hr full / ~30 s dry)
 # ============================================================
 Write-Step "STEP 8: DeepONet PDE benchmark"
-Invoke-Step "python hpit_benchmark/deeponet_benchmark.py $DRY_FLAG"
+Invoke-Step "python3 hpit_benchmark/deeponet_benchmark.py $DRY_FLAG"
 
 # ============================================================
 # STEP 9 — PINO benchmark (all 5 PDEs, PINNacle data)
 # (~1.5 hr full / ~30 s dry)
 # ============================================================
 Write-Step "STEP 9: PINO PDE benchmark"
-Invoke-Step "python hpit_benchmark/pino_benchmark.py $DRY_FLAG"
+Invoke-Step "python3 hpit_benchmark/pino_benchmark.py $DRY_FLAG"
 
 # ============================================================
 # STEP 10 — Mamba-NO benchmark (all 5 PDEs, PINNacle data)
 # (~1 hr full / ~30 s dry)
 # ============================================================
 Write-Step "STEP 10: Mamba-NO PDE benchmark"
-Invoke-Step "python hpit_benchmark/mamba_no_benchmark.py $DRY_FLAG"
+Invoke-Step "python3 hpit_benchmark/mamba_no_benchmark.py $DRY_FLAG"
 
 # ============================================================
 # STEP 11 — HPIT benchmark (all 5 PDEs, PINNacle reference data)
@@ -187,7 +187,7 @@ Invoke-Step "python hpit_benchmark/mamba_no_benchmark.py $DRY_FLAG"
 #       Dry-run uses synthetic FD data (no .dat files needed).
 # ============================================================
 Write-Step "STEP 11: HPIT PDE benchmark"
-$hpit_cmd = "python hpit_benchmark/hpit_pde_benchmark.py $DRY_FLAG"
+$hpit_cmd = "python3 hpit_benchmark/hpit_pde_benchmark.py $DRY_FLAG"
 if ($HPIT_CHECKPOINT -ne $null) {
     $hpit_cmd += " --checkpoint `"$HPIT_CHECKPOINT`""
 } else {
@@ -201,7 +201,7 @@ Invoke-Step $hpit_cmd
 # (<1 min)
 # ============================================================
 Write-Step "STEP 12: Collect and unify results"
-Invoke-Step "python hpit_benchmark/collect_results.py"
+Invoke-Step "python3 hpit_benchmark/collect_results.py"
 
 # ============================================================
 # Done

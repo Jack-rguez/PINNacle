@@ -25,12 +25,12 @@ echo ""
 # --------------------------------------------------------------------------
 echo "[0/8] Checking dependencies..."
 
-python -c "import torch; print(f'  PyTorch {torch.__version__}, CUDA={torch.cuda.is_available()}')"
-python -c "import scipy; print(f'  SciPy {scipy.__version__}')"
-python -c "import einops; print(f'  einops ok')"
+python3 -c "import torch; print(f'  PyTorch {torch.__version__}, CUDA={torch.cuda.is_available()}')"
+python3 -c "import scipy; print(f'  SciPy {scipy.__version__}')"
+python3 -c "import einops; print(f'  einops ok')"
 
 # Optional: Mamba SSM fast path
-python -c "import mamba_ssm; print('  mamba_ssm ok (GPU fast path available)')" 2>/dev/null \
+python3 -c "import mamba_ssm; print('  mamba_ssm ok (GPU fast path available)')" 2>/dev/null \
     || echo "  mamba_ssm not installed — pure-PyTorch fallback will be used (correct)"
 
 # Check ref/ data files exist (required for full runs)
@@ -52,34 +52,34 @@ echo ""
 # --------------------------------------------------------------------------
 
 echo "[1/8] FNO dry-run..."
-python hpit_benchmark/fno_benchmark.py --dry-run
+python3 hpit_benchmark/fno_benchmark.py --dry-run
 echo "  ✓ FNO"
 
 echo "[2/8] GNOT dry-run..."
-python hpit_benchmark/gnot_benchmark.py --dry-run
+python3 hpit_benchmark/gnot_benchmark.py --dry-run
 echo "  ✓ GNOT"
 
 echo "[3/8] DeepONet dry-run..."
-python hpit_benchmark/deeponet_benchmark.py --dry-run
+python3 hpit_benchmark/deeponet_benchmark.py --dry-run
 echo "  ✓ DeepONet"
 
 echo "[4/8] PINO dry-run..."
-python hpit_benchmark/pino_benchmark.py --dry-run
+python3 hpit_benchmark/pino_benchmark.py --dry-run
 echo "  ✓ PINO"
 
 echo "[5/8] Mamba-NO dry-run..."
-python hpit_benchmark/mamba_no_benchmark.py --dry-run
+python3 hpit_benchmark/mamba_no_benchmark.py --dry-run
 echo "  ✓ Mamba-NO"
 
 echo "[6/8] HPIT dry-run (trains 2 epochs on synthetic data, then evaluates)..."
-python hpit_benchmark/hpit_pde_benchmark.py --dry-run
+python3 hpit_benchmark/hpit_pde_benchmark.py --dry-run
 echo "  ✓ HPIT"
 
 # --------------------------------------------------------------------------
 # 7. Collect results
 # --------------------------------------------------------------------------
 echo "[7/8] Collect and unify results..."
-python hpit_benchmark/collect_results.py
+python3 hpit_benchmark/collect_results.py
 echo "  ✓ collect_results"
 
 # --------------------------------------------------------------------------
@@ -116,11 +116,11 @@ echo "  Next step (full run, ~10 hours on A100):"
 echo "    pwsh hpit_benchmark/run_all.ps1"
 echo ""
 echo "  Or run individual models:"
-echo "    python hpit_benchmark/fno_benchmark.py"
-echo "    python hpit_benchmark/gnot_benchmark.py"
-echo "    python hpit_benchmark/deeponet_benchmark.py"
-echo "    python hpit_benchmark/pino_benchmark.py"
-echo "    python hpit_benchmark/mamba_no_benchmark.py"
-echo "    python hpit_benchmark/hpit_pde_benchmark.py   # trains+evaluates"
-echo "    python hpit_benchmark/collect_results.py"
+echo "    python3 hpit_benchmark/fno_benchmark.py"
+echo "    python3 hpit_benchmark/gnot_benchmark.py"
+echo "    python3 hpit_benchmark/deeponet_benchmark.py"
+echo "    python3 hpit_benchmark/pino_benchmark.py"
+echo "    python3 hpit_benchmark/mamba_no_benchmark.py"
+echo "    python3 hpit_benchmark/hpit_pde_benchmark.py   # trains+evaluates"
+echo "    python3 hpit_benchmark/collect_results.py"
 echo "============================================================"
