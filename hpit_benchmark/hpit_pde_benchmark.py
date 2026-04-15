@@ -298,8 +298,13 @@ def train_hpit(model, x_train: np.ndarray, y_train: np.ndarray,
     n_train = x_gpu.shape[0]
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
-    # Scheduler runs over the full epoch budget; early stopping exits inside it.
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    # ReduceLROnPlateau halves the LR every time loss stalls for 5 epochs,
+    # pairing naturally with early stopping. CosineAnnealingLR(T_max=500) was
+    # wrong here — early stopping fired at epoch 6-21 so the LR never actually
+    # decayed (only 4% through the cosine schedule). ReduceLROnPlateau adapts
+    # to actual loss behavior regardless of epoch count.
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-6)
     loss_fn   = nn.MSELoss()
     # FIX #6 (2026-04-15): switch fp16 AMP → bf16 AMP. On A100, bf16 keeps the
     # fp32 exponent range, needs no GradScaler, and avoids the ComplexHalf /
@@ -333,8 +338,8 @@ def train_hpit(model, x_train: np.ndarray, y_train: np.ndarray,
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item() * xb.shape[0]
-        scheduler.step()
         avg = epoch_loss / n_train
+        scheduler.step(avg)   # ReduceLROnPlateau needs the loss value
 
         # --- Early stopping check ---
         if avg < best_loss - min_delta:
@@ -601,18 +606,19 @@ def main():
     # model trains exactly as long as it's improving — not 500 epochs blindly.
     parser.add_argument("--epochs", type=int, default=500,
                         help="Max training epochs — early stopping may exit sooner (default: 500; capped at 2 in --dry-run)")
-    parser.add_argument("--patience", type=int, default=15,
-                        help="Early-stopping patience: halt after this many epochs with no loss improvement (default: 15)")
-    # FIX #1 (2026-04-15): batch size 32 → 512, LR 1e-3 → 4e-3.
-    # Old bs=32 produced ~25,700 batches/epoch on Burgers1D, which was
-    # dominated by Python/DataLoader overhead (~9 min/epoch). bs=512 reduces
-    # that to ~1,600 batches and saturates A100 tensor cores. LR is
-    # sqrt-scaled (sqrt(512/32)=4) per Surge-Phenomenon NeurIPS 2024 guidance
-    # for Adam-family optimizers.
-    parser.add_argument("--lr", type=float, default=4e-3,
-                        help="Learning rate (default: 4e-3, sqrt-scaled for bs=512)")
-    parser.add_argument("--train-batch-size", type=int, default=512,
-                        help="Training batch size (default: 512)")
+    # patience=20 gives the model time to benefit from ~3-4 LR reductions
+    # (ReduceLROnPlateau patience=5 each) before the hard stop.
+    parser.add_argument("--patience", type=int, default=20,
+                        help="Early-stopping patience: halt after this many epochs with no loss improvement (default: 20)")
+    # bs=64 gives ~12,800 batches/epoch for Burgers1D — close to the bs=32
+    # baseline the other models used, while still benefiting from GPU preload.
+    # LR=1e-3 matches all other benchmark models (FNO, GNOT, DeepONet, etc.).
+    # Previous values (bs=512, lr=4e-3) caused the LR schedule to never decay
+    # before early stopping fired, leading to under-trained results.
+    parser.add_argument("--lr", type=float, default=1e-3,
+                        help="Learning rate (default: 1e-3)")
+    parser.add_argument("--train-batch-size", type=int, default=64,
+                        help="Training batch size (default: 64)")
     parser.add_argument("--batch-size", type=int, default=256,
                         help="Inference batch size (default: 256)")
     parser.add_argument("--n-seeds", type=int, default=3,
