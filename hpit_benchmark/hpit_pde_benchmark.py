@@ -277,11 +277,13 @@ def train_hpit(model, x_train: np.ndarray, y_train: np.ndarray,
     x_t = torch.tensor(x_train, dtype=torch.float32)
     y_t = torch.tensor(y_train, dtype=torch.float32)
     dataset = TensorDataset(x_t, y_t)
-    loader  = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    loader  = DataLoader(dataset, batch_size=batch_size, shuffle=True,
+                         num_workers=2, pin_memory=(device == "cuda"))
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     loss_fn   = nn.MSELoss()
+    scaler    = torch.cuda.amp.GradScaler(enabled=(device == "cuda"))
 
     model.train()
     log_every = max(1, epochs // 5)
@@ -291,11 +293,13 @@ def train_hpit(model, x_train: np.ndarray, y_train: np.ndarray,
         for xb, yb in loader:
             xb, yb = xb.to(device), yb.to(device)
             optimizer.zero_grad()
-            out  = model(xb)
-            pred = out.predictions          # (batch, output_dim)
-            loss = loss_fn(pred, yb)
-            loss.backward()
-            optimizer.step()
+            with torch.cuda.amp.autocast(enabled=(device == "cuda")):
+                out  = model(xb)
+                pred = out.predictions      # (batch, output_dim)
+                loss = loss_fn(pred, yb)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             epoch_loss += loss.item() * len(xb)
         scheduler.step()
 
