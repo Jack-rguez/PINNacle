@@ -1,6 +1,1 @@
 pde,model,l2rel,run_time_seconds,notes
-NavierStokes2D,PINO,1.001945,0.04,dry_run
-Burgers1D,PINO,0.997034,0.02,dry_run
-Burgers2D,PINO,1.001158,0.04,dry_run
-KuramotoSivashinsky,PINO,1.001779,1.00,dry_run
-HeatComplexGeometry,PINO,1.002498,0.04,dry_run

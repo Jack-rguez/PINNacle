@@ -113,22 +113,19 @@ def train_pino(model, x_train: torch.Tensor, y_train: torch.Tensor,
     loader  = DataLoader(dataset, batch_size=batch_size, shuffle=True,
                          num_workers=2, pin_memory=(device == "cuda"))
 
-    scaler = torch.cuda.amp.GradScaler(enabled=(device == "cuda"))
     model.train()
     for epoch in range(1, epochs + 1):
         epoch_loss = 0.0
         for xb, yb in loader:
             xb, yb = xb.to(device), yb.to(device)
             optimizer.zero_grad()
-            with torch.cuda.amp.autocast(enabled=(device == "cuda")):
-                pred = model(xb)
-                # PINO total loss: supervised + physics residual
-                data_loss = mse(pred, yb)
-                phys_loss = model.compute_physics_loss(pred)
-                loss = data_loss + phys_loss
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            pred = model(xb)
+            # PINO total loss: supervised + physics residual
+            data_loss = mse(pred, yb)
+            phys_loss = model.compute_physics_loss(pred)
+            loss = data_loss + phys_loss
+            loss.backward()
+            optimizer.step()
             epoch_loss += loss.item() * len(xb)
         scheduler.step()
         if epoch % max(1, epochs // 5) == 0 or epoch == 1:
