@@ -228,6 +228,12 @@ def load_hpit_model(input_dim: int, output_dim: int,
         use_batch_norm=False,
         use_layer_norm=True,
         activation="swish",
+        # FIX #4 (2026-04-15): this flag is declared in HPITConfig but never
+        # actually consumed by any forward pass (verified by grep across
+        # hpit_src/). Setting it to False has no runtime effect on speed, but
+        # we turn it off for config cleanliness — the HPIT model is ~1.2 MB
+        # of parameters, nowhere near needing activation checkpointing on A100.
+        use_gradient_checkpointing=False,
     )
 
     model = HPITModel(config)
@@ -255,57 +261,108 @@ def load_hpit_model(input_dim: int, output_dim: int,
 
 def train_hpit(model, x_train: np.ndarray, y_train: np.ndarray,
                epochs: int, batch_size: int, lr: float,
-               device: str) -> nn.Module:
+               device: str, patience: int = 15) -> nn.Module:
     """
-    Train HPIT on PINNacle data.  Matches FNO/GNOT/DeepONet training pattern exactly:
-      - Adam optimizer, weight_decay=1e-4
-      - CosineAnnealingLR scheduler
-      - MSE loss
-      - Shuffled DataLoader
+    Train HPIT on PINNacle data with early stopping.
+
+    - Adam optimizer, weight_decay=1e-4
+    - CosineAnnealingLR scheduler over full epoch budget
+    - MSE loss
+    - bf16 AMP on CUDA (fp32 on CPU)
+    - Early stopping: halts when training loss hasn't improved by more than
+      min_delta=1e-6 for `patience` consecutive epochs, then restores the
+      best-seen weights. This lets the model train as long as it's improving
+      and stops automatically when it converges — no arbitrary epoch cap needed.
 
     Args:
-        model:   HPITModel (on device, eval mode)
-        x_train: (N, seq_len, features) float32 numpy array
-        y_train: (N, output_dim) float32 numpy array
-        epochs:  number of training epochs
+        model:     HPITModel (on device, eval mode)
+        x_train:   (N, seq_len, features) float32 numpy array
+        y_train:   (N, output_dim) float32 numpy array
+        epochs:    max training epochs (hard ceiling; early stopping may exit sooner)
         batch_size: training batch size
-        lr:      initial learning rate
-        device:  'cpu' or 'cuda'
+        lr:        initial learning rate
+        device:    'cpu' or 'cuda'
+        patience:  epochs with no improvement before stopping (default: 15)
 
-    Returns: trained model in eval mode
+    Returns: trained model (best weights) in eval mode
     """
-    x_t = torch.tensor(x_train, dtype=torch.float32)
-    y_t = torch.tensor(y_train, dtype=torch.float32)
-    dataset = TensorDataset(x_t, y_t)
-    loader  = DataLoader(dataset, batch_size=batch_size, shuffle=True,
-                         num_workers=2, pin_memory=(device == "cuda"))
+    # FIX #2 (2026-04-15): preload entire dataset to the device once, then
+    # iterate with tensor slicing. This eliminates DataLoader / TensorDataset
+    # per-item serialization overhead (PyTorch issue #4959) and all per-batch
+    # CPU→GPU copies. For ~100 MB tensors on an 80 GB A100 this is trivial,
+    # and it was the single biggest wall-clock bottleneck in the old loop
+    # (~9 min/epoch with bs=32 → dominated by DataLoader, not compute).
+    # FIX #7 (2026-04-15): no DataLoader at all → no num_workers / pin_memory.
+    x_gpu = torch.as_tensor(x_train, dtype=torch.float32, device=device)
+    y_gpu = torch.as_tensor(y_train, dtype=torch.float32, device=device)
+    n_train = x_gpu.shape[0]
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
+    # Scheduler runs over the full epoch budget; early stopping exits inside it.
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     loss_fn   = nn.MSELoss()
-    scaler    = torch.cuda.amp.GradScaler(enabled=(device == "cuda"))
+    # FIX #6 (2026-04-15): switch fp16 AMP → bf16 AMP. On A100, bf16 keeps the
+    # fp32 exponent range, needs no GradScaler, and avoids the ComplexHalf /
+    # NaN risks of fp16. Same throughput as fp16 on Ampere+.
+    use_amp = (device == "cuda")
+
+    # --- Early stopping state ---
+    # min_delta: minimum loss drop to count as an improvement.
+    # best_state is kept on CPU to avoid holding a second copy on the GPU.
+    min_delta   = 1e-6
+    best_loss   = float('inf')
+    no_improve  = 0
+    best_state  = None
 
     model.train()
-    log_every = max(1, epochs // 5)
+    # Log every 10 epochs so progress is visible without flooding the terminal.
+    log_every = min(10, max(1, epochs // 10))
 
     for epoch in range(1, epochs + 1):
         epoch_loss = 0.0
-        for xb, yb in loader:
-            xb, yb = xb.to(device), yb.to(device)
+        perm = torch.randperm(n_train, device=device)
+        for start in range(0, n_train, batch_size):
+            idx = perm[start:start + batch_size]
+            xb  = x_gpu[idx]
+            yb  = y_gpu[idx]
             optimizer.zero_grad()
-            with torch.cuda.amp.autocast(enabled=(device == "cuda")):
+            with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
                 out  = model(xb)
                 pred = out.predictions      # (batch, output_dim)
                 loss = loss_fn(pred, yb)
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-            epoch_loss += loss.item() * len(xb)
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item() * xb.shape[0]
         scheduler.step()
+        avg = epoch_loss / n_train
+
+        # --- Early stopping check ---
+        if avg < best_loss - min_delta:
+            best_loss  = avg
+            no_improve = 0
+            # Clone weights to CPU so we don't keep a second GPU copy.
+            best_state = {k: v.detach().cpu().clone()
+                          for k, v in model.state_dict().items()}
+        else:
+            no_improve += 1
 
         if epoch == 1 or epoch % log_every == 0:
-            avg = epoch_loss / len(x_train)
-            logger.info(f"  Epoch {epoch}/{epochs}  loss={avg:.4e}")
+            logger.info(
+                "  Epoch %d/%d  loss=%.4e  best=%.4e  patience=%d/%d",
+                epoch, epochs, avg, best_loss, no_improve, patience)
+
+        if no_improve >= patience:
+            logger.info(
+                "  Early stopping triggered: no improvement for %d epochs. "
+                "Best loss=%.4e (stopped at epoch %d / %d).",
+                patience, best_loss, epoch, epochs)
+            break
+
+    # Restore the best-seen weights (handles case where last epoch isn't best).
+    if best_state is not None:
+        model.load_state_dict(
+            {k: v.to(device) for k, v in best_state.items()})
+        logger.info("  Best weights restored (loss=%.4e).", best_loss)
 
     model.eval()
     return model
@@ -491,6 +548,7 @@ def benchmark_pde(pde_name: str, args, device: str):
                 batch_size=args.train_batch_size,
                 lr=args.lr,
                 device=device,
+                patience=args.patience,
             )
             t_train = time.time() - t_train_start
             logger.info("Training complete in %.1fs.", t_train)
@@ -538,12 +596,23 @@ def main():
                         help="Temporal resolution (default: 100)")
     parser.add_argument("--seq-len", type=int, default=30,
                         help="HPIT sequence window length (default: 30)")
+    # FIX #3 (2026-04-15, revised): 500 epoch hard ceiling with early stopping.
+    # Early stopping exits as soon as loss plateaus (see --patience), so the
+    # model trains exactly as long as it's improving — not 500 epochs blindly.
     parser.add_argument("--epochs", type=int, default=500,
-                        help="Training epochs (default: 500; capped at 2 in --dry-run)")
-    parser.add_argument("--lr", type=float, default=1e-3,
-                        help="Learning rate (default: 1e-3)")
-    parser.add_argument("--train-batch-size", type=int, default=32,
-                        help="Training batch size (default: 32)")
+                        help="Max training epochs — early stopping may exit sooner (default: 500; capped at 2 in --dry-run)")
+    parser.add_argument("--patience", type=int, default=15,
+                        help="Early-stopping patience: halt after this many epochs with no loss improvement (default: 15)")
+    # FIX #1 (2026-04-15): batch size 32 → 512, LR 1e-3 → 4e-3.
+    # Old bs=32 produced ~25,700 batches/epoch on Burgers1D, which was
+    # dominated by Python/DataLoader overhead (~9 min/epoch). bs=512 reduces
+    # that to ~1,600 batches and saturates A100 tensor cores. LR is
+    # sqrt-scaled (sqrt(512/32)=4) per Surge-Phenomenon NeurIPS 2024 guidance
+    # for Adam-family optimizers.
+    parser.add_argument("--lr", type=float, default=4e-3,
+                        help="Learning rate (default: 4e-3, sqrt-scaled for bs=512)")
+    parser.add_argument("--train-batch-size", type=int, default=512,
+                        help="Training batch size (default: 512)")
     parser.add_argument("--batch-size", type=int, default=256,
                         help="Inference batch size (default: 256)")
     parser.add_argument("--n-seeds", type=int, default=3,
