@@ -599,8 +599,15 @@ def benchmark_pde(pde_name: str, args, device: str):
             logger.info("Training complete in %.1fs.", t_train)
             logger.info("Checkpoint saved: %s", ckpt_path)
             base_notes = "trained_pinnacle" if use_pinnacle else notes_data
-            notes_train = (f"physics={ckpt_suffix.lstrip('_')}" if use_physics
-                           else base_notes)
+            if use_physics:
+                active = "+".join(filter(None, [
+                    "mass"     if physics_use_mass     else "",
+                    "energy"   if physics_use_energy   else "",
+                    "elevation" if physics_use_elevation else "",
+                ])) or "all"
+                notes_train = f"ablation|physics={active}|bs={args.train_batch_size}"
+            else:
+                notes_train = base_notes
 
         notes_data = notes_train if args.checkpoint else notes_data
 
