@@ -261,7 +261,8 @@ def load_hpit_model(input_dim: int, output_dim: int,
 
 def train_hpit(model, x_train: np.ndarray, y_train: np.ndarray,
                epochs: int, batch_size: int, lr: float,
-               device: str, patience: int = 15) -> nn.Module:
+               device: str, patience: int = 15,
+               checkpoint_path: Optional[str] = None) -> nn.Module:
     """
     Train HPIT on PINNacle data with early stopping.
 
@@ -348,6 +349,9 @@ def train_hpit(model, x_train: np.ndarray, y_train: np.ndarray,
             # Clone weights to CPU so we don't keep a second GPU copy.
             best_state = {k: v.detach().cpu().clone()
                           for k, v in model.state_dict().items()}
+            # Save to disk immediately so a Ctrl+C doesn't lose progress.
+            if checkpoint_path is not None:
+                torch.save(best_state, checkpoint_path)
         else:
             no_improve += 1
 
@@ -546,6 +550,7 @@ def benchmark_pde(pde_name: str, args, device: str):
                 checkpoint_path=None,
                 device=device,
             )
+            ckpt_path = RESULTS_DIR / f"hpit_{pde_name}.pt"
             t_train_start = time.time()
             model = train_hpit(
                 model, x_train_h, y_train_h,
@@ -554,13 +559,10 @@ def benchmark_pde(pde_name: str, args, device: str):
                 lr=args.lr,
                 device=device,
                 patience=args.patience,
+                checkpoint_path=str(ckpt_path),
             )
             t_train = time.time() - t_train_start
             logger.info("Training complete in %.1fs.", t_train)
-
-            # Auto-save checkpoint so it can be reused
-            ckpt_path = RESULTS_DIR / f"hpit_{pde_name}.pt"
-            torch.save(model.state_dict(), ckpt_path)
             logger.info("Checkpoint saved: %s", ckpt_path)
             notes_train = "trained_pinnacle" if use_pinnacle else notes_data
 
