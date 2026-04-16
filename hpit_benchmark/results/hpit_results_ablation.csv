@@ -1,0 +1,5 @@
+pde,model,l2rel,l2rel_std,run_time_seconds,notes
+HeatComplexGeometry,HPIT,nan,nan,0.00,ERROR: view size is not compatible with input tensor's size and stride (at least one dimension spans across
+HeatComplexGeometry,HPIT,0.999998,0.000000,0.08,dry_run
+HeatComplexGeometry,HPIT,0.999934,0.000000,0.11,dry_run
+HeatComplexGeometry,HPIT,0.999965,0.000000,0.08,dry_run

@@ -220,6 +220,10 @@ class HPITConfig(ModelConfig):
     use_fused_ops: bool = True
     compile_model: bool = True
     use_amp: bool = True  # Automatic Mixed Precision
+    # Per-component physics ablation flags (only used when use_physics_layers=True)
+    physics_use_mass: bool = True
+    physics_use_energy: bool = True
+    physics_use_elevation: bool = True
 
 
 class MultiScaleAttention(nn.Module):
@@ -307,10 +311,15 @@ class MultiScaleAttention(nn.Module):
 class PhysicsInformedLayer(nn.Module):
     """Advanced physics-informed layer with comprehensive snow hydrology constraints."""
 
-    def __init__(self, input_dim: int, hidden_dim: int = 256):
+    def __init__(self, input_dim: int, hidden_dim: int = 256,
+                 use_mass: bool = True, use_energy: bool = True,
+                 use_elevation: bool = True):
         super().__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
+        self.use_mass = use_mass
+        self.use_energy = use_energy
+        self.use_elevation = use_elevation
 
         # Enhanced physics constraint networks with GPU-optimized components
         self.mass_balance_net = nn.Sequential(
@@ -397,13 +406,17 @@ class PhysicsInformedLayer(nn.Module):
 
     def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         """Apply comprehensive physics constraints to the input."""
-        # Core physics constraints
-        mass_balance = self.mass_balance_net(x)
-        energy_balance = self.energy_balance_net(x)
-        elevation_effect = self.elevation_physics_net(x)
-        seasonal_effect = self.seasonal_physics_net(x)
-        radiation_effect = self.radiation_physics_net(x)
-        precip_effect = self.precip_physics_net(x)
+        zeros = torch.zeros(x.shape[0], 1, device=x.device, dtype=x.dtype)
+        # Core physics constraints — each can be disabled for ablation studies
+        mass_balance    = self.mass_balance_net(x)    if self.use_mass     else zeros
+        energy_balance  = self.energy_balance_net(x)  if self.use_energy   else zeros
+        elevation_effect = self.elevation_physics_net(x) if self.use_elevation else zeros
+        # Seasonal/radiation/precip: zeroed when any component is ablated so
+        # the 6-dim fusion input remains consistent across ablation conditions.
+        ablation_mode = not (self.use_mass and self.use_energy and self.use_elevation)
+        seasonal_effect  = zeros if ablation_mode else self.seasonal_physics_net(x)
+        radiation_effect = zeros if ablation_mode else self.radiation_physics_net(x)
+        precip_effect    = zeros if ablation_mode else self.precip_physics_net(x)
 
         # Advanced physics calculations (using learned representations)
         # Snow density evolution
@@ -513,7 +526,10 @@ class HPITModel(BaseTransformer):
         # Advanced physics-informed processing
         if self.config.use_physics_layers:
             self.physics_layer = PhysicsInformedLayer(
-                self.embedding_dim, hidden_dim=self.hidden_dim // 2
+                self.embedding_dim, hidden_dim=self.hidden_dim // 2,
+                use_mass=getattr(self.config, 'physics_use_mass', True),
+                use_energy=getattr(self.config, 'physics_use_energy', True),
+                use_elevation=getattr(self.config, 'physics_use_elevation', True),
             )
 
         # Feature interaction networks
@@ -650,8 +666,8 @@ class HPITModel(BaseTransformer):
         # Physics-informed processing
         physics_outputs = None
         if self.config.use_physics_layers and hasattr(self, 'physics_layer'):
-            # Flatten for physics processing
-            x_physics_flat = x_attended.view(-1, x_attended.shape[-1])
+            # Flatten for physics processing (reshape handles non-contiguous tensors)
+            x_physics_flat = x_attended.reshape(-1, x_attended.shape[-1])
             physics_outputs = self.physics_layer(x_physics_flat)
             
             # Integrate physics

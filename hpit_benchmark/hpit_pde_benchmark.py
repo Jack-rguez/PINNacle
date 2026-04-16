@@ -198,7 +198,11 @@ def pinnacle_to_hpit(pde_name: str, x_data: torch.Tensor,
 
 def load_hpit_model(input_dim: int, output_dim: int,
                     checkpoint_path: Optional[str] = None,
-                    device: str = "cpu"):
+                    device: str = "cpu",
+                    use_physics: bool = False,
+                    physics_use_mass: bool = False,
+                    physics_use_energy: bool = False,
+                    physics_use_elevation: bool = False):
     """
     Load HPIT model with the given input/output dimensions.
     Adapts HPITConfig for PDE inputs (not SWE meteorological inputs).
@@ -208,6 +212,10 @@ def load_hpit_model(input_dim: int, output_dim: int,
         output_dim: Number of outputs (e.g. 1 for scalar u, 2 for [u,v])
         checkpoint_path: Path to .pt checkpoint (optional)
         device: 'cpu' or 'cuda'
+        use_physics: Enable PhysicsInformedLayer (default: off, SWE-specific)
+        physics_use_mass: Enable mass_balance sub-net (ablation)
+        physics_use_energy: Enable energy_balance sub-net (ablation)
+        physics_use_elevation: Enable elevation sub-net (ablation)
     """
     # HPITModel and HPITConfig are loaded at module level via importlib.util
     # from hpit_benchmark/hpit_src/hpit.py — no src/ dependency.
@@ -221,7 +229,10 @@ def load_hpit_model(input_dim: int, output_dim: int,
         hidden_dim=512,
         num_attention_scales=4,
         dropout=0.1,
-        use_physics_layers=False,   # Physics constraints are SWE-specific
+        use_physics_layers=use_physics,
+        physics_use_mass=physics_use_mass,
+        physics_use_energy=physics_use_energy,
+        physics_use_elevation=physics_use_elevation,
         use_spatial_attention=True,
         use_temporal_attention=True,
         use_feature_selection=False,
@@ -533,6 +544,11 @@ def benchmark_pde(pde_name: str, args, device: str):
         if args.dry_run:
             epochs = min(epochs, 2)   # cap at 2 for dry-run speed
 
+        use_physics     = getattr(args, 'physics', False)
+        physics_use_mass     = getattr(args, 'physics_mass', False)
+        physics_use_energy   = getattr(args, 'physics_energy', False)
+        physics_use_elevation = getattr(args, 'physics_elevation', False)
+
         if args.checkpoint and os.path.exists(args.checkpoint):
             logger.info("Checkpoint provided — skipping training, loading weights.")
             model = load_hpit_model(
@@ -540,6 +556,10 @@ def benchmark_pde(pde_name: str, args, device: str):
                 output_dim=output_dim,
                 checkpoint_path=args.checkpoint,
                 device=device,
+                use_physics=use_physics,
+                physics_use_mass=physics_use_mass,
+                physics_use_energy=physics_use_energy,
+                physics_use_elevation=physics_use_elevation,
             )
             notes_train = "pretrained_ckpt"
         else:
@@ -549,8 +569,22 @@ def benchmark_pde(pde_name: str, args, device: str):
                 output_dim=output_dim,
                 checkpoint_path=None,
                 device=device,
+                use_physics=use_physics,
+                physics_use_mass=physics_use_mass,
+                physics_use_energy=physics_use_energy,
+                physics_use_elevation=physics_use_elevation,
             )
-            ckpt_path = RESULTS_DIR / f"hpit_{pde_name}.pt"
+            # Build checkpoint name that reflects ablation variant
+            if use_physics:
+                components = "_".join(filter(None, [
+                    "mass"     if physics_use_mass     else "",
+                    "energy"   if physics_use_energy   else "",
+                    "elev"     if physics_use_elevation else "",
+                ])) or "all"
+                ckpt_suffix = f"_phys_{components}"
+            else:
+                ckpt_suffix = ""
+            ckpt_path = RESULTS_DIR / f"hpit_{pde_name}{ckpt_suffix}.pt"
             t_train_start = time.time()
             model = train_hpit(
                 model, x_train_h, y_train_h,
@@ -564,7 +598,9 @@ def benchmark_pde(pde_name: str, args, device: str):
             t_train = time.time() - t_train_start
             logger.info("Training complete in %.1fs.", t_train)
             logger.info("Checkpoint saved: %s", ckpt_path)
-            notes_train = "trained_pinnacle" if use_pinnacle else notes_data
+            base_notes = "trained_pinnacle" if use_pinnacle else notes_data
+            notes_train = (f"physics={ckpt_suffix.lstrip('_')}" if use_physics
+                           else base_notes)
 
         notes_data = notes_train if args.checkpoint else notes_data
 
@@ -625,9 +661,24 @@ def main():
                         help="Inference batch size (default: 256)")
     parser.add_argument("--n-seeds", type=int, default=3,
                         help="Number of seeds for std estimate (default: 3)")
+    # Physics ablation flags
+    parser.add_argument("--physics", action="store_true",
+                        help="Enable PhysicsInformedLayer (SWE-specific; off by default for PDE tasks)")
+    parser.add_argument("--physics-mass", action="store_true",
+                        help="Enable mass_balance sub-net (requires --physics)")
+    parser.add_argument("--physics-energy", action="store_true",
+                        help="Enable energy_balance sub-net (requires --physics)")
+    parser.add_argument("--physics-elevation", action="store_true",
+                        help="Enable elevation sub-net (requires --physics)")
     args = parser.parse_args()
 
     # Device selection
+    # Redirect results CSV for ablation runs so they don't pollute main results
+    if getattr(args, 'physics', False):
+        global RESULTS_CSV
+        RESULTS_CSV = RESULTS_DIR / "hpit_results_ablation.csv"
+        logger.info("Physics ablation mode — results → hpit_results_ablation.csv")
+
     if args.device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
     else:
