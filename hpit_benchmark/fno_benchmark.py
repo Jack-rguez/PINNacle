@@ -333,16 +333,22 @@ def _build_burgers2d_data(n_xy: int = 32, T_in: int = 5, T_out: int = 1,
     y_grid = np.linspace(0, _BURGERS2D_L, n_xy)
 
     # cols: u@t0, v@t0, u@t1, v@t1, ... (22 cols after x,y)
-    # Take u component only (cols 2,4,6,8,...,22 — 0-indexed even offset from col 2)
-    sol = np.zeros((n_t_ref, n_xy, n_xy), dtype=np.float32)
+    # Load both u (even offset) and v (odd offset)
+    sol_u = np.zeros((n_t_ref, n_xy, n_xy), dtype=np.float32)
+    sol_v = np.zeros((n_t_ref, n_xy, n_xy), dtype=np.float32)
     for ti in range(n_t_ref):
-        u_col = dat[:, 2 + ti * 2]     # u component at timestep ti
-        sol[ti] = _interp_scattered_to_grid(x_pts, y_pts, u_col, x_grid, y_grid)
+        sol_u[ti] = _interp_scattered_to_grid(x_pts, y_pts, dat[:, 2 + ti * 2],     x_grid, y_grid)
+        sol_v[ti] = _interp_scattered_to_grid(x_pts, y_pts, dat[:, 2 + ti * 2 + 1], x_grid, y_grid)
 
+    # Input: T_in snapshots of u only → (n_xy, n_xy, T_in)
+    # Output: both u and v at the next timestep → (n_xy, n_xy, 2)  [T_out=1 assumed]
     x_list, y_list = [], []
     for t_start in range(0, n_t_ref - T_in - T_out + 1):
-        inp = sol[t_start:t_start + T_in].transpose(1, 2, 0)  # (n_xy, n_xy, T_in)
-        out = sol[t_start + T_in:t_start + T_in + T_out].transpose(1, 2, 0)
+        inp = sol_u[t_start:t_start + T_in].transpose(1, 2, 0)   # (n_xy, n_xy, T_in)
+        out_u = sol_u[t_start + T_in:t_start + T_in + T_out]     # (T_out, n_xy, n_xy)
+        out_v = sol_v[t_start + T_in:t_start + T_in + T_out]     # (T_out, n_xy, n_xy)
+        # stack u, v in last dim → (n_xy, n_xy, 2) for T_out=1
+        out = np.stack([out_u[0], out_v[0]], axis=-1)             # (n_xy, n_xy, 2)
         x_list.append(inp)
         y_list.append(out)
 
@@ -449,6 +455,10 @@ def make_dry_run_data(pde_name: str, T_in: int, T_out: int,
         # Steady-state: input = 1-channel param field, output = 3-channel uvp
         x = torch.randn(n_samples, n, n, 1)
         y = torch.randn(n_samples, n, n, 3)
+    elif pde_name == "Burgers2D":
+        # Input: u only (T_in channels); output: both u and v (2 channels)
+        x = torch.randn(n_samples, n, n, T_in)
+        y = torch.randn(n_samples, n, n, 2)
     else:
         x = torch.randn(n_samples, n, n, T_in)
         y = torch.randn(n_samples, n, n, T_out)
@@ -525,16 +535,30 @@ def build_model(pde_name: str, T_in: int, T_out: int,
 # ---------------------------------------------------------------------------
 
 def train_fno(model: nn.Module, x_train: torch.Tensor, y_train: torch.Tensor,
-              epochs: int, lr: float, batch_size: int, device: str) -> nn.Module:
-    """Train FNO with Adam + MSE loss."""
+              epochs: int, lr: float, batch_size: int, device: str,
+              patience: int = 50, checkpoint_path: Optional[str] = None) -> nn.Module:
+    """
+    Train FNO with Adam + MSE loss + early stopping + checkpointing.
+
+    Early stopping: patience epochs with no improvement > min_delta=1e-5.
+    Checkpoint: save best weights to disk on every improvement.
+    Scheduler: ReduceLROnPlateau (halves LR every 10 stalled epochs).
+    """
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.5, patience=10, min_lr=1e-6)
     loss_fn = nn.MSELoss()
 
     dataset = TensorDataset(x_train, y_train)
     loader  = DataLoader(dataset, batch_size=batch_size, shuffle=True,
                          num_workers=2, pin_memory=(device == "cuda"))
+
+    min_delta  = 1e-5
+    best_loss  = float('inf')
+    no_improve = 0
+    best_state = None
+    log_every  = min(10, max(1, epochs // 10))
 
     model.train()
     for epoch in range(1, epochs + 1):
@@ -547,10 +571,32 @@ def train_fno(model: nn.Module, x_train: torch.Tensor, y_train: torch.Tensor,
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item() * len(xb)
-        scheduler.step()
-        if epoch % max(1, epochs // 5) == 0 or epoch == 1:
-            logger.info("  Epoch %d/%d — loss=%.6f", epoch, epochs,
-                        epoch_loss / len(x_train))
+        avg = epoch_loss / len(x_train)
+        scheduler.step(avg)
+
+        # Early stopping
+        if avg < best_loss - min_delta:
+            best_loss  = avg
+            no_improve = 0
+            best_state = {k: v.detach().cpu().clone()
+                          for k, v in model.state_dict().items()}
+            if checkpoint_path is not None:
+                torch.save({"model_state_dict": best_state}, checkpoint_path)
+        else:
+            no_improve += 1
+
+        if epoch == 1 or epoch % log_every == 0:
+            logger.info("  Epoch %d/%d — loss=%.6f  best=%.6f  patience=%d/%d",
+                        epoch, epochs, avg, best_loss, no_improve, patience)
+
+        if no_improve >= patience:
+            logger.info("  Early stopping at epoch %d (no improvement for %d epochs)",
+                        epoch, patience)
+            break
+
+    if best_state is not None:
+        model.load_state_dict({k: v.to(device) for k, v in best_state.items()})
+        logger.info("  Best weights restored (loss=%.6f)", best_loss)
 
     return model
 
@@ -614,6 +660,10 @@ def run_fno_on_pde(pde_name: str, args, device: str):
         x_data, y_data = load_data(pde_name, T_in, T_out, dry_run=args.dry_run)
         logger.info("Data shapes — x: %s, y: %s", tuple(x_data.shape), tuple(y_data.shape))
 
+        # Detect actual T_in/T_out from loaded data (Burgers2D y has 2 channels)
+        T_in  = x_data.shape[-1]
+        T_out = y_data.shape[-1]
+
         n = len(x_data)
         split = max(1, int(0.8 * n))
         x_train, y_train = x_data[:split], y_data[:split]
@@ -638,12 +688,13 @@ def run_fno_on_pde(pde_name: str, args, device: str):
         else:
             if ckpt_path:
                 logger.warning("Checkpoint not found: %s — training.", ckpt_path)
+            ckpt_save = RESULTS_DIR / f"fno_{pde_name}_ckpt.pt"
             logger.info("Training FNO for %d epochs...", epochs)
             model = train_fno(model, x_train, y_train,
                               epochs=epochs, lr=args.lr,
-                              batch_size=args.batch_size, device=device)
-            ckpt_save = RESULTS_DIR / f"fno_{pde_name}_ckpt.pt"
-            torch.save({"model_state_dict": model.state_dict()}, ckpt_save)
+                              batch_size=args.batch_size, device=device,
+                              patience=getattr(args, 'patience', 50),
+                              checkpoint_path=str(ckpt_save))
             logger.info("Checkpoint saved to %s", ckpt_save)
 
         l2       = evaluate_fno(model, x_test, y_test, device=device,
@@ -675,6 +726,8 @@ def main():
     parser.add_argument("--dry-run", action="store_true",
                         help="Random tensors only — fast pipeline check.")
     parser.add_argument("--epochs", type=int, default=500)
+    parser.add_argument("--patience", type=int, default=50,
+                        help="Early stopping patience (default: 50)")
     parser.add_argument("--lr",     type=float, default=1e-3)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--modes",  type=int, default=16)

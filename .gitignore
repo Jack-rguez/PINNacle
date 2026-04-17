@@ -168,3 +168,14 @@ cython_debug/
 # vscode
 .vscode/
 .idea/
+brandon_flags.md
+CLAUDE_CODE_PRERUN_FIXES.md
+HPIT paper.pdf
+.claude/settings.local.json
+hpit_benchmark/benchmark_discrepancies.md
+hpit_benchmark/benchmark_literature_notes.md
+hpit_benchmark/BENCHMARK_PROVENANCE.md
+hpit_benchmark/DIRECTORY_AUDIT.md
+hpit_benchmark/PHYSICS_INTEGRATION_SUMMARY.md
+hpit_benchmark/data/burgers/1D_Burgers_Sols_Nu0.001.hdf5
+hpit_benchmark/data/ns_incom/ns_incom_inhom_2d_512-0.h5

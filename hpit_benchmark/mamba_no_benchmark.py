@@ -189,6 +189,10 @@ def run_mamba_on_pde(pde_name: str, args, device: str):
         logger.info("Data shapes — x: %s, y: %s",
                     tuple(x_data.shape), tuple(y_data.shape))
 
+        # Detect actual T_in/T_out from loaded data (Burgers2D y has 2 channels)
+        T_in  = x_data.shape[-1]
+        T_out = y_data.shape[-1]
+
         n     = len(x_data)
         split = max(1, int(0.8 * n))
         x_train, y_train = x_data[:split], y_data[:split]

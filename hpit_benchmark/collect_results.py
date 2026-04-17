@@ -38,7 +38,8 @@ logger = logging.getLogger(__name__)
 
 BENCHMARK_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = BENCHMARK_DIR / "results"
-HPIT_CSV      = RESULTS_DIR / "hpit_results.csv"
+HPIT_CSV          = RESULTS_DIR / "hpit_results.csv"
+HPIT_ABLATION_CSV = RESULTS_DIR / "hpit_results_ablation.csv"
 FNO_CSV       = RESULTS_DIR / "fno_results.csv"
 GNOT_CSV      = RESULTS_DIR / "gnot_results.csv"
 DEEPONET_CSV  = RESULTS_DIR / "deeponet_results.csv"
@@ -113,6 +114,18 @@ def load_model_csv(csv_path: Path, default_model: str = "") -> Dict[str, Dict[st
 
 def load_hpit_results() -> Dict[str, Dict[str, str]]:
     return load_model_csv(HPIT_CSV, default_model="HPIT")
+
+
+def load_hpit_ablation_results() -> Dict[str, Dict[str, str]]:
+    """Load HPIT data-only ablation results, labeled 'HPIT (no physics)'."""
+    raw = load_model_csv(HPIT_ABLATION_CSV, default_model="HPIT (no physics)")
+    # Remap any 'HPIT' model name (written by hpit_ablation_runner) to the
+    # canonical ablation label so it appears as a separate row in the table.
+    remapped: Dict[str, Dict[str, str]] = {}
+    for model, pde_map in raw.items():
+        label = "HPIT (no physics)" if model == "HPIT" else model
+        remapped.setdefault(label, {}).update(pde_map)
+    return remapped
 
 
 def load_pinnacle_results() -> Dict[str, Dict[str, str]]:
@@ -256,6 +269,10 @@ def main():
         rows = load_model_csv(csv_path, default_model=model_name)
         for m, pde_map in rows.items():
             all_results.setdefault(m, {}).update(pde_map)
+
+    # Load HPIT data-only ablation ("HPIT (no physics)" rows)
+    for m, pde_map in load_hpit_ablation_results().items():
+        all_results.setdefault(m, {}).update(pde_map)
 
     # Load PINNacle PINN results (runs/*/result.csv)
     pinnacle = load_pinnacle_results()

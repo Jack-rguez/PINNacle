@@ -83,6 +83,18 @@ _mod_hpit = _load_module("hpit_src.hpit", HPIT_SRC_DIR / "hpit.py", package="hpi
 HPITModel = _mod_hpit.HPITModel
 HPITConfig = _mod_hpit.HPITConfig
 
+# Load pde_physics.py — PDE-specific PINN residual losses for Burgers1D and Heat2D.
+_mod_pde_physics = _load_module(
+    "hpit_src.pde_physics", HPIT_SRC_DIR / "pde_physics.py", package="hpit_src"
+)
+PDE_PHYSICS_REGISTRY = _mod_pde_physics.PDE_PHYSICS_REGISTRY
+
+# Load unified physics constraints (shared with PINO for comparability).
+_mod_phys_constraints = _load_module(
+    "pde_physics_constraints", BENCHMARK_DIR / "pde_physics_constraints.py"
+)
+get_physics_loss = _mod_phys_constraints.get_physics_loss
+
 # Load pde_problems.py from the same directory as this script.
 _mod_pde = _load_module("pde_problems", BENCHMARK_DIR / "pde_problems.py")
 PDEProblemConfig = _mod_pde.PDEProblemConfig
@@ -156,21 +168,34 @@ def pinnacle_to_hpit(pde_name: str, x_data: torch.Tensor,
         y_hpit = y_np[:, :, 0].reshape(B * n_x, 1)  # (B*n_x, 1)
 
     elif pde_name == "NavierStokes2D":
-        # Steady-state: x_np (B, n_x, n_y, 1), y_np (B, n_x, n_y, 3)
+        # NS steady-state CASE A: the B parametric conditions (lid velocities
+        # a=2,4,6,8,10,16,32) serve as the sequence dimension for HPIT's
+        # temporal attention. HPIT attends over the parametric sweep rather
+        # than a time series. This is a known architectural deviation from
+        # HPIT's temporal SWE use case; documented in benchmark_discrepancies.md.
+        #
+        # x_np: (B, n_x, n_y, 1) — normalized lid velocity a/a_max per sample
+        # y_np: (B, n_x, n_y, 3) — (u, v, p) per sample
+        # Output: x_hpit (n_x*n_y, B, 3), y_hpit (n_x*n_y, 3)
         B, n_x, n_y, _ = x_np.shape
         xs = np.linspace(0.0, 1.0, n_x, dtype=np.float32)
         ys = np.linspace(0.0, 1.0, n_y, dtype=np.float32)
         XX, YY = np.meshgrid(xs, ys, indexing='ij')  # (n_x, n_y)
 
-        # Sequence length = 1 (steady-state: input is Re parameter field)
-        # Features: [x, y, Re_param]
-        xc = np.broadcast_to(XX[None, :, :, None], (B, n_x, n_y, 1))
-        yc = np.broadcast_to(YY[None, :, :, None], (B, n_x, n_y, 1))
-        re = x_np  # (B, n_x, n_y, 1)
-        seq = np.concatenate([xc, yc, re], axis=-1)     # (B, n_x, n_y, 3)
-        x_hpit = seq.reshape(B * n_x * n_y, 1, 3)       # seq_len=1
+        # Lid-velocity value for each parametric condition (same at all i,j)
+        a_vals = x_np[:, 0, 0, 0]  # (B,) — normalized a_k
 
-        y_hpit = y_np.reshape(B * n_x * n_y, 3)         # (u, v, p)
+        # Build sequence for each spatial point over all B conditions
+        # xc, yc, ac each (n_x, n_y, B)
+        xc = np.broadcast_to(XX[:, :, None], (n_x, n_y, B))
+        yc = np.broadcast_to(YY[:, :, None], (n_x, n_y, B))
+        ac = np.broadcast_to(a_vals[None, None, :], (n_x, n_y, B))
+
+        seq = np.stack([xc, yc, ac], axis=-1)   # (n_x, n_y, B, 3)
+        x_hpit = seq.reshape(n_x * n_y, B, 3)   # (N_spatial, seq_len=B, 3)
+
+        # Target: (u, v, p) at last parametric condition (highest lid velocity)
+        y_hpit = y_np[-1, :, :, :].reshape(n_x * n_y, 3)  # (N_spatial, 3)
 
     else:
         # 2D time-dependent: x_np (B, n_x, n_y, T_in), y_np (B, n_x, n_y, T_out)
@@ -187,9 +212,73 @@ def pinnacle_to_hpit(pde_name: str, x_data: torch.Tensor,
         seq = np.stack([xc, yc, tc, x_np], axis=-1)     # (B, n_x, n_y, T_in, 4)
         x_hpit = seq.reshape(B * n_x * n_y, T_in, 4)
 
-        y_hpit = y_np[:, :, :, 0].reshape(B * n_x * n_y, 1)
+        # Take all output channels (2 for Burgers2D: u and v; 1 for others)
+        y_hpit = y_np.reshape(B * n_x * n_y, y_np.shape[-1])
 
     return x_hpit, y_hpit
+
+
+# ---------------------------------------------------------------------------
+# HPIT physics bridge: reconstruct grid predictions → shared physics loss
+# ---------------------------------------------------------------------------
+
+def hpit_grid_physics_loss(model, pde_name, x_windows, device,
+                           physics_loss_mod, physics_coords, physics_params,
+                           max_windows=8):
+    """
+    Bridge between HPIT (point-wise) and grid-based physics constraints.
+
+    Runs HPIT on a batch of grid-format windows, reshapes predictions
+    back to grid format, and passes to the shared physics loss module
+    from pde_physics_constraints.py.
+
+    Args:
+        model:             HPITModel in train mode
+        pde_name:          PDE name (for format detection)
+        x_windows:         grid-format input, e.g. (B,n_x,T_in) or (B,n_x,n_y,T_in)
+        device:            'cuda' or 'cpu'
+        physics_loss_mod:  instance of BurgersPhysicsLoss / HeatPhysicsLoss / etc.
+        physics_coords:    dict with 'dx' (and 'dy' for 2D)
+        physics_params:    dict with PDE parameters (nu, etc.)
+        max_windows:       cap on windows to use per call
+    Returns:
+        Scalar physics loss (differentiable)
+    """
+    if pde_name in _PDE1D:
+        B, n_x, T_in = x_windows.shape
+    elif pde_name == "NavierStokes2D":
+        B, n_x, n_y, _ = x_windows.shape
+    else:
+        B, n_x, n_y, T_in = x_windows.shape
+
+    B = min(B, max_windows)
+
+    # Convert a subset of windows to HPIT format, run model, reshape back
+    x_sub = x_windows[:B]
+    y_dummy = torch.zeros_like(x_sub[..., :1])  # dummy target (unused)
+
+    x_hpit_np, _ = pinnacle_to_hpit(pde_name,
+                                     x_sub.cpu() if x_sub.is_cuda else x_sub,
+                                     y_dummy.cpu() if y_dummy.is_cuda else y_dummy)
+    x_hpit = torch.as_tensor(x_hpit_np, dtype=torch.float32, device=device)
+
+    # Forward through HPIT
+    out = model(x_hpit)
+    preds = out.predictions  # (N, output_dim)
+
+    # Reshape to grid format for physics loss
+    if pde_name in _PDE1D:
+        # preds: (B*n_x, 1) → (B, n_x, 1)
+        u_grid = preds.view(B, n_x, -1)
+    elif pde_name == "NavierStokes2D":
+        # preds: (B*n_x*n_y, 3) → (B, n_x, n_y, 3)
+        u_grid = preds.view(B, n_x, n_y, -1)
+    else:
+        # preds: (B*n_x*n_y, 1) → (B, n_x, n_y, 1)
+        u_grid = preds.view(B, n_x, n_y, -1)
+
+    # Compute physics loss using the shared constraints
+    return physics_loss_mod(u_grid, physics_coords, physics_params)
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +362,16 @@ def load_hpit_model(input_dim: int, output_dim: int,
 def train_hpit(model, x_train: np.ndarray, y_train: np.ndarray,
                epochs: int, batch_size: int, lr: float,
                device: str, patience: int = 15,
-               checkpoint_path: Optional[str] = None) -> nn.Module:
+               checkpoint_path: Optional[str] = None,
+               physics_fn=None,
+               x_physics=None,
+               y_physics=None,
+               physics_lambda: float = 0.01,
+               physics_every: int = 5,
+               # Grid-based physics (from pde_physics_constraints.py)
+               grid_physics_fn=None,
+               pde_name: str = "",
+               x_grid_physics=None) -> nn.Module:
     """
     Train HPIT on PINNacle data with early stopping.
 
@@ -285,16 +383,24 @@ def train_hpit(model, x_train: np.ndarray, y_train: np.ndarray,
       min_delta=1e-6 for `patience` consecutive epochs, then restores the
       best-seen weights. This lets the model train as long as it's improving
       and stops automatically when it converges — no arbitrary epoch cap needed.
+    - Optional PINN residual loss: every `physics_every` epochs, a separate
+      gradient step enforces the PDE residual (Raissi et al. 2019, PINN).
 
     Args:
-        model:     HPITModel (on device, eval mode)
-        x_train:   (N, seq_len, features) float32 numpy array
-        y_train:   (N, output_dim) float32 numpy array
-        epochs:    max training epochs (hard ceiling; early stopping may exit sooner)
-        batch_size: training batch size
-        lr:        initial learning rate
-        device:    'cpu' or 'cuda'
-        patience:  epochs with no improvement before stopping (default: 15)
+        model:          HPITModel (on device, eval mode)
+        x_train:        (N, seq_len, features) float32 numpy array
+        y_train:        (N, output_dim) float32 numpy array
+        epochs:         max training epochs (hard ceiling)
+        batch_size:     training batch size
+        lr:             initial learning rate
+        device:         'cpu' or 'cuda'
+        patience:       epochs with no improvement before stopping (default: 15)
+        checkpoint_path: path to write best weights on each improvement
+        physics_fn:     residual_loss function from PDE_PHYSICS_REGISTRY (optional)
+        x_physics:      grid-format input tensor for physics loss, e.g. (B,n_x,T_in)
+        y_physics:      grid-format target tensor for physics loss, e.g. (B,n_x,1)
+        physics_lambda: initial value for learned λ (default: 0.1, per HPIT preprint)
+        physics_every:  run physics gradient step every N epochs (default: 5)
 
     Returns: trained model (best weights) in eval mode
     """
@@ -309,7 +415,22 @@ def train_hpit(model, x_train: np.ndarray, y_train: np.ndarray,
     y_gpu = torch.as_tensor(y_train, dtype=torch.float32, device=device)
     n_train = x_gpu.shape[0]
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
+    # Learned physics loss weight λ — per HPIT preprint, initialized at the
+    # value given by --physics-lambda (default 0.1) and optimized jointly with
+    # the model. Stored in log-space so the effective λ = exp(log_lambda) is
+    # always positive regardless of gradient direction.
+    # Only created when physics is actually active (grid_physics_fn or physics_fn).
+    _has_physics = (grid_physics_fn is not None) or (physics_fn is not None)
+    if _has_physics:
+        import math as _math
+        log_lambda = nn.Parameter(
+            torch.tensor(_math.log(physics_lambda), device=device))
+        optimizer = torch.optim.Adam(
+            list(model.parameters()) + [log_lambda],
+            lr=lr, weight_decay=1e-4)
+    else:
+        log_lambda = None
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     # ReduceLROnPlateau halves the LR every time loss stalls for 5 epochs,
     # pairing naturally with early stopping. CosineAnnealingLR(T_max=500) was
     # wrong here — early stopping fired at epoch 6-21 so the LR never actually
@@ -352,6 +473,43 @@ def train_hpit(model, x_train: np.ndarray, y_train: np.ndarray,
             epoch_loss += loss.item() * xb.shape[0]
         avg = epoch_loss / n_train
         scheduler.step(avg)   # ReduceLROnPlateau needs the loss value
+
+        # --- PDE physics PINN loss (separate gradient step every physics_every epochs) ---
+        # Enforces the governing PDE residual on the reconstructed field.
+        # References: Raissi et al. (2019) JCP 378, 686-707.
+        phys_loss_val = None
+        if epoch % physics_every == 0:
+            if (grid_physics_fn is not None
+                    and x_grid_physics is not None
+                    and pde_name):
+                # New grid-based approach (shared pde_physics_constraints.py)
+                model.train()
+                optimizer.zero_grad()
+                phys_loss = grid_physics_fn(model, pde_name, x_grid_physics,
+                                            device)
+                lam = log_lambda.exp()
+                (lam * phys_loss).backward()
+                torch.nn.utils.clip_grad_norm_(
+                    list(model.parameters()) + [log_lambda], 1.0)
+                optimizer.step()
+                phys_loss_val = phys_loss.item()
+            elif (physics_fn is not None and x_physics is not None):
+                # Legacy approach (pde_physics.py)
+                model.train()
+                optimizer.zero_grad()
+                phys_loss = physics_fn(
+                    model, x_physics, y_physics, device,
+                    max_windows=8, enable_grad=True,
+                )
+                lam = log_lambda.exp()
+                (lam * phys_loss).backward()
+                torch.nn.utils.clip_grad_norm_(
+                    list(model.parameters()) + [log_lambda], 1.0)
+                optimizer.step()
+                phys_loss_val = phys_loss.item()
+        if phys_loss_val is not None and epoch % log_every == 0:
+            logger.info("  Physics residual loss=%.4e  lambda=%.4f (learned)",
+                        phys_loss_val, log_lambda.exp().item())
 
         # --- Early stopping check ---
         if avg < best_loss - min_delta:
@@ -488,6 +646,10 @@ def benchmark_pde(pde_name: str, args, device: str):
     use_pinnacle = (not args.dry_run) and (not getattr(args, 'synthetic', False))
 
     try:
+        # x_train_op / y_train_op: PINNacle grid-format tensors (needed for physics loss)
+        x_train_op = None
+        y_train_op = None
+
         if use_pinnacle:
             # --- PINNacle .dat path (default for full runs) ---
             logger.info("Loading PINNacle reference data for %s ...", pde_name)
@@ -499,16 +661,33 @@ def benchmark_pde(pde_name: str, args, device: str):
             logger.info("PINNacle shapes — x: %s, y: %s",
                         tuple(x_data.shape), tuple(y_data.shape))
 
-            # 80/20 train/test split — same ratio as FNO/GNOT/DeepONet/PINO
-            n = len(x_data)
-            split = max(1, int(0.8 * n))
-            x_train_op, y_train_op = x_data[:split], y_data[:split]
-            x_test_op,  y_test_op  = x_data[split:], y_data[split:]
-            if len(x_test_op) == 0:
-                x_test_op, y_test_op = x_data[-1:], y_data[-1:]
+            if pde_name == "NavierStokes2D":
+                # NS CASE A: use all B parametric conditions as the sequence.
+                # Split on spatial points (not parametric conditions) so that
+                # HPIT sees seq_len=B at both train and test time.
+                x_hpit_all, y_hpit_all = pinnacle_to_hpit(pde_name, x_data, y_data)
+                n_spatial = x_hpit_all.shape[0]
+                split_sp = max(1, int(0.8 * n_spatial))
+                x_train_h = x_hpit_all[:split_sp]
+                y_train_h = y_hpit_all[:split_sp]
+                x_input   = x_hpit_all[split_sp:]
+                y_target  = y_hpit_all[split_sp:]
+                if len(x_input) == 0:
+                    x_input  = x_hpit_all[-1:]
+                    y_target = y_hpit_all[-1:]
+                x_train_op = x_data   # all 7 conditions for physics loss
+                y_train_op = y_data
+            else:
+                # 80/20 train/test split on B (parametric conditions / time windows)
+                n = len(x_data)
+                split = max(1, int(0.8 * n))
+                x_train_op, y_train_op = x_data[:split], y_data[:split]
+                x_test_op,  y_test_op  = x_data[split:], y_data[split:]
+                if len(x_test_op) == 0:
+                    x_test_op, y_test_op = x_data[-1:], y_data[-1:]
 
-            x_train_h, y_train_h = pinnacle_to_hpit(pde_name, x_train_op, y_train_op)
-            x_input,   y_target  = pinnacle_to_hpit(pde_name, x_test_op,  y_test_op)
+                x_train_h, y_train_h = pinnacle_to_hpit(pde_name, x_train_op, y_train_op)
+                x_input,   y_target  = pinnacle_to_hpit(pde_name, x_test_op,  y_test_op)
             logger.info("HPIT train: %s → %s | test: %s → %s",
                         x_train_h.shape, y_train_h.shape,
                         x_input.shape,   y_target.shape)
@@ -544,10 +723,46 @@ def benchmark_pde(pde_name: str, args, device: str):
         if args.dry_run:
             epochs = min(epochs, 2)   # cap at 2 for dry-run speed
 
-        use_physics     = getattr(args, 'physics', False)
+        use_physics          = getattr(args, 'physics', False)
         physics_use_mass     = getattr(args, 'physics_mass', False)
         physics_use_energy   = getattr(args, 'physics_energy', False)
         physics_use_elevation = getattr(args, 'physics_elevation', False)
+
+        # PDE-specific PINN residual loss (separate from SWE ablation flags)
+        use_pde_physics = getattr(args, 'pde_physics', False)
+        physics_fn_train  = None
+        x_physics_train   = None
+        y_physics_train   = None
+        # Grid-based physics (from shared pde_physics_constraints.py)
+        grid_physics_fn_train = None
+        x_grid_physics_train  = None
+
+        if use_pde_physics and use_pinnacle:
+            # Try shared constraints first (covers all 5 PDEs)
+            phys_mod, phys_coords, phys_params = get_physics_loss(pde_name)
+            if phys_mod is not None:
+                # Build a closure that the training loop can call
+                phys_mod = phys_mod.to(device) if hasattr(phys_mod, 'to') else phys_mod
+                def _grid_phys_fn(model, pn, x_win, dev, _mod=phys_mod,
+                                  _coords=phys_coords, _params=phys_params):
+                    return hpit_grid_physics_loss(model, pn, x_win, dev,
+                                                 _mod, _coords, _params)
+                grid_physics_fn_train = _grid_phys_fn
+                x_grid_physics_train  = x_train_op
+                logger.info("PDE physics enabled (shared constraints): %s",
+                            _mod_phys_constraints.PDE_PHYSICS[pde_name]["description"])
+            elif pde_name in PDE_PHYSICS_REGISTRY:
+                # Fallback to legacy pde_physics.py (Burgers1D, Heat2D only)
+                entry = PDE_PHYSICS_REGISTRY[pde_name]
+                physics_fn_train = entry["residual_fn"]
+                x_physics_train  = x_train_op
+                y_physics_train  = y_train_op
+                logger.info("PDE physics enabled (legacy): %s", entry["description"])
+            else:
+                logger.warning("--pde-physics requested but no physics for %s", pde_name)
+        elif use_pde_physics:
+            logger.warning("--pde-physics requested but data is not PINNacle format "
+                           "— physics loss skipped.")
 
         if args.checkpoint and os.path.exists(args.checkpoint):
             logger.info("Checkpoint provided — skipping training, loading weights.")
@@ -594,6 +809,14 @@ def benchmark_pde(pde_name: str, args, device: str):
                 device=device,
                 patience=args.patience,
                 checkpoint_path=str(ckpt_path),
+                physics_fn=physics_fn_train,
+                x_physics=x_physics_train,
+                y_physics=y_physics_train,
+                physics_lambda=getattr(args, 'physics_lambda', 0.01),
+                physics_every=getattr(args, 'physics_every', 5),
+                grid_physics_fn=grid_physics_fn_train,
+                pde_name=pde_name,
+                x_grid_physics=x_grid_physics_train,
             )
             t_train = time.time() - t_train_start
             logger.info("Training complete in %.1fs.", t_train)
@@ -606,6 +829,11 @@ def benchmark_pde(pde_name: str, args, device: str):
                     "elevation" if physics_use_elevation else "",
                 ])) or "all"
                 notes_train = f"ablation|physics={active}|bs={args.train_batch_size}"
+            elif use_pde_physics:
+                lam = getattr(args, 'physics_lambda', 0.01)
+                every = getattr(args, 'physics_every', 5)
+                notes_train = (f"pde_physics={pde_name.lower()}"
+                               f"|lambda={lam}|every={every}|bs={args.train_batch_size}")
             else:
                 notes_train = base_notes
 
@@ -668,7 +896,7 @@ def main():
                         help="Inference batch size (default: 256)")
     parser.add_argument("--n-seeds", type=int, default=3,
                         help="Number of seeds for std estimate (default: 3)")
-    # Physics ablation flags
+    # SWE physics ablation flags (existing — tests removing SWE-specific layers)
     parser.add_argument("--physics", action="store_true",
                         help="Enable PhysicsInformedLayer (SWE-specific; off by default for PDE tasks)")
     parser.add_argument("--physics-mass", action="store_true",
@@ -677,14 +905,33 @@ def main():
                         help="Enable energy_balance sub-net (requires --physics)")
     parser.add_argument("--physics-elevation", action="store_true",
                         help="Enable elevation sub-net (requires --physics)")
+    # PDE-specific PINN physics (new — enforces governing PDE residual during training)
+    parser.add_argument("--pde-physics", action="store_true",
+                        help="Add PDE-specific PINN residual loss during training "
+                             "(Burgers1D: u_t+u*u_x-nu*u_xx=0; Heat2D: u_t-u_xx-u_yy=0). "
+                             "Requires PINNacle data and a registered PDE.")
+    parser.add_argument("--physics-lambda", type=float, default=0.1,
+                        help="Weight of PDE residual loss term (default: 0.01)")
+    parser.add_argument("--physics-every", type=int, default=5,
+                        help="Add physics gradient step every N epochs (default: 5)")
+    parser.add_argument("--results-csv", type=str, default=None,
+                        help="Override output CSV path (default: hpit_results.csv or "
+                             "hpit_results_ablation.csv when physics is active)")
     args = parser.parse_args()
 
-    # Device selection
-    # Redirect results CSV for ablation runs so they don't pollute main results
-    if getattr(args, 'physics', False):
-        global RESULTS_CSV
+    # Redirect results CSV:
+    # - --results-csv: explicit override
+    # - --physics (SWE sub-component ablation): → ablation CSV
+    # - --pde-physics (main HPIT run with PDE residuals): → hpit_results.csv (default)
+    # - no flags (pure data-driven ablation): handled by hpit_ablation_runner.py which
+    #   passes --results-csv explicitly; direct calls without flags also go to hpit_results.csv
+    global RESULTS_CSV
+    if args.results_csv:
+        RESULTS_CSV = Path(args.results_csv)
+        logger.info("Results CSV overridden → %s", RESULTS_CSV)
+    elif getattr(args, 'physics', False):
         RESULTS_CSV = RESULTS_DIR / "hpit_results_ablation.csv"
-        logger.info("Physics ablation mode — results → hpit_results_ablation.csv")
+        logger.info("SWE physics ablation mode — results → hpit_results_ablation.csv")
 
     if args.device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"

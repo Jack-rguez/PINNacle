@@ -31,6 +31,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import torch
@@ -103,15 +104,24 @@ def build_model(pde_name: str, T_in: int, T_out: int,
 # ---------------------------------------------------------------------------
 
 def train_pino(model, x_train: torch.Tensor, y_train: torch.Tensor,
-               epochs: int, lr: float, batch_size: int, device: str):
+               epochs: int, lr: float, batch_size: int, device: str,
+               patience: int = 50, checkpoint_path: Optional[str] = None):
+    """Train PINO with Adam + data+physics loss + early stopping + checkpointing."""
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.5, patience=10, min_lr=1e-6)
     mse = nn.MSELoss()
 
     dataset = TensorDataset(x_train, y_train)
     loader  = DataLoader(dataset, batch_size=batch_size, shuffle=True,
                          num_workers=2, pin_memory=(device == "cuda"))
+
+    min_delta  = 1e-5
+    best_loss  = float('inf')
+    no_improve = 0
+    best_state = None
+    log_every  = min(10, max(1, epochs // 10))
 
     model.train()
     for epoch in range(1, epochs + 1):
@@ -127,10 +137,33 @@ def train_pino(model, x_train: torch.Tensor, y_train: torch.Tensor,
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item() * len(xb)
-        scheduler.step()
-        if epoch % max(1, epochs // 5) == 0 or epoch == 1:
-            logger.info("  Epoch %d/%d — loss=%.6f", epoch, epochs,
-                        epoch_loss / len(x_train))
+        avg = epoch_loss / len(x_train)
+        scheduler.step(avg)
+
+        # Early stopping
+        if avg < best_loss - min_delta:
+            best_loss  = avg
+            no_improve = 0
+            best_state = {k: v.detach().cpu().clone()
+                          for k, v in model.state_dict().items()}
+            if checkpoint_path is not None:
+                torch.save({"model_state_dict": best_state}, checkpoint_path)
+        else:
+            no_improve += 1
+
+        if epoch == 1 or epoch % log_every == 0:
+            logger.info("  Epoch %d/%d — loss=%.6f  best=%.6f  patience=%d/%d",
+                        epoch, epochs, avg, best_loss, no_improve, patience)
+
+        if no_improve >= patience:
+            logger.info("  Early stopping at epoch %d (no improvement for %d epochs)",
+                        epoch, patience)
+            break
+
+    if best_state is not None:
+        model.load_state_dict({k: v.to(device) for k, v in best_state.items()})
+        logger.info("  Best weights restored (loss=%.6f)", best_loss)
+
     return model
 
 
@@ -192,6 +225,10 @@ def run_pino_on_pde(pde_name: str, args, device: str):
         logger.info("Data shapes — x: %s, y: %s",
                     tuple(x_data.shape), tuple(y_data.shape))
 
+        # Detect actual T_in/T_out from loaded data (Burgers2D y has 2 channels)
+        T_in  = x_data.shape[-1]
+        T_out = y_data.shape[-1]
+
         n     = len(x_data)
         split = max(1, int(0.8 * n))
         x_train, y_train = x_data[:split], y_data[:split]
@@ -217,11 +254,12 @@ def run_pino_on_pde(pde_name: str, args, device: str):
                 logger.warning("Checkpoint not found: %s — training.", ckpt_path)
             logger.info("Training PINO for %d epochs, physics_weight=%.3f",
                         epochs, phys_w)
+            ckpt_save = RESULTS_DIR / f"pino_{pde_name}_ckpt.pt"
             model = train_pino(model, x_train, y_train,
                                epochs=epochs, lr=args.lr,
-                               batch_size=args.batch_size, device=device)
-            ckpt_save = RESULTS_DIR / f"pino_{pde_name}_ckpt.pt"
-            torch.save({"model_state_dict": model.state_dict()}, ckpt_save)
+                               batch_size=args.batch_size, device=device,
+                               patience=args.patience,
+                               checkpoint_path=str(ckpt_save))
             logger.info("Checkpoint saved to %s", ckpt_save)
 
         l2       = evaluate_pino(model, x_test, y_test, device=device,
@@ -253,6 +291,8 @@ def main():
     parser.add_argument("--epochs",         type=int,   default=500)
     parser.add_argument("--lr",             type=float, default=1e-3)
     parser.add_argument("--batch-size",     type=int,   default=32)
+    parser.add_argument("--patience",       type=int,   default=50,
+                        help="Early stopping patience (default: 50)")
     parser.add_argument("--modes",          type=int,   default=16)
     parser.add_argument("--width",          type=int,   default=64)
     parser.add_argument("--n-layers",       type=int,   default=4)

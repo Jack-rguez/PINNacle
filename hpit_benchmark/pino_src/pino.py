@@ -198,8 +198,8 @@ def _physics_loss_ns2d(uvp_pred: torch.Tensor, dx: float,
     return (continuity ** 2).mean()
 
 
-# Map PDE name → physics loss function
-PHYSICS_LOSS_FNS = {
+# Map PDE name → physics loss function (legacy inline versions, kept for reference)
+_PHYSICS_LOSS_FNS_LEGACY = {
     "Burgers1D":           lambda pred, dx: _physics_loss_burgers1d(pred, dx),
     "KuramotoSivashinsky": lambda pred, dx: _physics_loss_ks1d(pred, dx),
     "Burgers2D":           lambda pred, dx: _physics_loss_burgers2d(pred, dx),
@@ -215,6 +215,36 @@ GRID_DX = {
     "HeatComplexGeometry":  16.0 / 32,          # x in [-8,8], n_xy=32
     "NavierStokes2D":       1.0 / 64,           # x in [0,1], n_xy=64
 }
+
+# --- Shared physics constraints (same as HPIT uses for comparability) ---
+# Import from pde_physics_constraints.py in the benchmark directory.
+_PHYS_CONSTRAINTS_PATH = Path(__file__).resolve().parents[1] / "pde_physics_constraints.py"
+_phys_spec = importlib.util.spec_from_file_location("pde_physics_constraints", str(_PHYS_CONSTRAINTS_PATH))
+_phys_mod = importlib.util.module_from_spec(_phys_spec)
+sys.modules["pde_physics_constraints"] = _phys_mod
+_phys_spec.loader.exec_module(_phys_mod)
+
+# The shared physics loss classes: BurgersPhysicsLoss, HeatPhysicsLoss,
+# NSPhysicsLoss, KSPhysicsLoss — used via get_physics_loss().
+_get_physics_loss = _phys_mod.get_physics_loss
+
+# Build PHYSICS_LOSS_FNS using the shared constraints
+def _build_shared_phys_fn(pde_name):
+    """Create a lambda(pred, dx) → scalar loss using shared constraints."""
+    loss_mod, coords, params = _get_physics_loss(pde_name)
+    if loss_mod is None:
+        return None
+    def _fn(pred, dx, _mod=loss_mod, _c=coords, _p=params):
+        return _mod(pred, _c, _p)
+    return _fn
+
+PHYSICS_LOSS_FNS = {
+    pde: _build_shared_phys_fn(pde)
+    for pde in ["Burgers1D", "KuramotoSivashinsky", "Burgers2D",
+                "HeatComplexGeometry", "NavierStokes2D"]
+}
+# Remove any None entries (shouldn't happen, all 5 are registered)
+PHYSICS_LOSS_FNS = {k: v for k, v in PHYSICS_LOSS_FNS.items() if v is not None}
 
 
 # ---------------------------------------------------------------------------
