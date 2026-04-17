@@ -1,1 +1,4 @@
 pde,model,l2rel,l2rel_std,run_time_seconds,notes
+HeatComplexGeometry,HPIT,0.013890,0.000000,0.84,pinnacle_dat
+Burgers1D,HPIT,0.116974,0.000000,14.33,pinnacle_dat
+Burgers1D,HPIT,0.020994,0.000000,4.13,pinnacle_dat
