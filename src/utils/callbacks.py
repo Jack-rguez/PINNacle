@@ -201,7 +201,7 @@ class TesterCallback(Callback):
             return
 
         self.indexes = np.array(self.indexes)
-        self.frmses = np.array(self.frmses)
+        self.frmses = np.atleast_2d(np.array(self.frmses))
         np.savetxt(
             self.save_path + 'errors.txt',
             np.array([self.indexes, self.maes, self.mses, self.mxes, self.l1res, self.l2res, self.crmses,\

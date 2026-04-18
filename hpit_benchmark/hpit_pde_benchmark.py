@@ -413,6 +413,8 @@ def train_hpit(model, x_train: np.ndarray, y_train: np.ndarray,
     # FIX #7 (2026-04-15): no DataLoader at all → no num_workers / pin_memory.
     x_gpu = torch.as_tensor(x_train, dtype=torch.float32, device=device)
     y_gpu = torch.as_tensor(y_train, dtype=torch.float32, device=device)
+    if y_gpu.ndim == 1:
+        y_gpu = y_gpu.unsqueeze(-1)
     n_train = x_gpu.shape[0]
 
     # Learned physics loss weight λ — per HPIT preprint, initialized at the

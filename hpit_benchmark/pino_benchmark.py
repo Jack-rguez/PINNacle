@@ -108,7 +108,7 @@ def train_pino(model, x_train: torch.Tensor, y_train: torch.Tensor,
                patience: int = 50, checkpoint_path: Optional[str] = None):
     """Train PINO with Adam + data+physics loss + early stopping + checkpointing."""
     model = model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=0.0)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', factor=0.5, patience=10, min_lr=1e-6)
     mse = nn.MSELoss()

@@ -545,7 +545,7 @@ def train_fno(model: nn.Module, x_train: torch.Tensor, y_train: torch.Tensor,
     Scheduler: ReduceLROnPlateau (halves LR every 10 stalled epochs).
     """
     model = model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=0.0)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', factor=0.5, patience=10, min_lr=1e-6)
     loss_fn = nn.MSELoss()
