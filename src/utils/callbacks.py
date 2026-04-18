@@ -201,7 +201,11 @@ class TesterCallback(Callback):
             return
 
         self.indexes = np.array(self.indexes)
-        self.frmses = np.atleast_2d(np.array(self.frmses))
+        _frmses_raw = np.array(self.frmses)
+        if _frmses_raw.ndim == 2 and _frmses_raw.shape[1] == 3:
+            self.frmses = _frmses_raw
+        else:
+            self.frmses = np.full((len(self.indexes), 3), np.nan)
         np.savetxt(
             self.save_path + 'errors.txt',
             np.array([self.indexes, self.maes, self.mses, self.mxes, self.l1res, self.l2res, self.crmses,\

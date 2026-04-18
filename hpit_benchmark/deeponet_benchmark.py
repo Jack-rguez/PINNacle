@@ -137,19 +137,18 @@ def train_deeponet(model: nn.Module, x_train: torch.Tensor, y_train: torch.Tenso
     best_state = None
     log_every  = min(10, max(1, epochs // 10))
 
-    scaler = torch.cuda.amp.GradScaler(enabled=(device == "cuda"))
+    use_amp = (device == "cuda")
     model.train()
     for epoch in range(1, epochs + 1):
         epoch_loss = 0.0
         for xb, yb in loader:
             xb, yb = xb.to(device), yb.to(device)
             optimizer.zero_grad()
-            with torch.cuda.amp.autocast(enabled=(device == "cuda")):
+            with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
                 pred = model(xb)
                 loss = loss_fn(pred, yb)
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            loss.backward()
+            optimizer.step()
             epoch_loss += loss.item() * len(xb)
         avg = epoch_loss / len(x_train)
         scheduler.step(avg)

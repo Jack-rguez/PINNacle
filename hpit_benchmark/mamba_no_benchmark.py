@@ -102,7 +102,7 @@ def build_model(pde_name: str, T_in: int, T_out: int,
 def train_mamba(model: nn.Module, x_train: torch.Tensor, y_train: torch.Tensor,
                 epochs: int, lr: float, batch_size: int, device: str) -> nn.Module:
     model = model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=0.0)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     loss_fn   = nn.MSELoss()
 
@@ -110,19 +110,18 @@ def train_mamba(model: nn.Module, x_train: torch.Tensor, y_train: torch.Tensor,
     loader  = DataLoader(dataset, batch_size=batch_size, shuffle=True,
                          num_workers=2, pin_memory=(device == "cuda"))
 
-    scaler = torch.cuda.amp.GradScaler(enabled=(device == "cuda"))
+    use_amp = (device == "cuda")
     model.train()
     for epoch in range(1, epochs + 1):
         epoch_loss = 0.0
         for xb, yb in loader:
             xb, yb = xb.to(device), yb.to(device)
             optimizer.zero_grad()
-            with torch.cuda.amp.autocast(enabled=(device == "cuda")):
+            with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
                 pred = model(xb)
                 loss = loss_fn(pred, yb)
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            loss.backward()
+            optimizer.step()
             epoch_loss += loss.item() * len(xb)
         scheduler.step()
         if epoch % max(1, epochs // 5) == 0 or epoch == 1:

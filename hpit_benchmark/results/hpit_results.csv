@@ -1,0 +1,6 @@
+pde,model,l2rel,l2rel_std,run_time_seconds,notes
+Burgers1D,HPIT,2.028291,0.000000,0.02,dry_run
+Burgers2D,HPIT,0.261074,0.000000,0.10,dry_run
+HeatComplexGeometry,HPIT,0.917740,0.000000,0.07,dry_run
+KuramotoSivashinsky,HPIT,0.947769,0.000000,0.02,dry_run
+NavierStokes2D,HPIT,1.016793,0.000000,0.10,dry_run

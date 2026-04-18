@@ -1,0 +1,6 @@
+pde,model,l2rel,run_time_seconds,notes
+HeatComplexGeometry,FNO,1.001931,5.97,dry_run
+Burgers1D,FNO,0.995756,4.79,dry_run
+Burgers2D,FNO,1.004051,4.55,dry_run
+KuramotoSivashinsky,FNO,1.012079,4.59,dry_run
+NavierStokes2D,FNO,1.011976,4.57,dry_run
