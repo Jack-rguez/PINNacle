@@ -179,3 +179,4 @@ hpit_benchmark/DIRECTORY_AUDIT.md
 hpit_benchmark/PHYSICS_INTEGRATION_SUMMARY.md
 hpit_benchmark/data/burgers/1D_Burgers_Sols_Nu0.001.hdf5
 hpit_benchmark/data/ns_incom/ns_incom_inhom_2d_512-0.h5
+hpit_benchmark/results/
