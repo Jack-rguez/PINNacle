@@ -60,6 +60,9 @@ class LR_Adaptor(torch.optim.Optimizer):
             self.zero_grad()
             total_loss = torch.sum(losses * torch.as_tensor(self.loss_weight))
             total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(
+            [p for g in self.optimizer.param_groups for p in g['params']], max_norm=1.0
+        )
         self.optimizer.step()
 
         return total_loss

@@ -219,6 +219,9 @@ def run_pino_on_pde(pde_name: str, args, device: str):
     width  = 8  if args.dry_run else args.width
     epochs = 2  if args.dry_run else args.epochs
     phys_w = args.physics_weight
+    # KS 4th-order spectral residual inflates physics loss ~1000x vs other PDEs
+    _PHYS_W_OVERRIDE = {"KuramotoSivashinsky": 1e-3}
+    phys_w = _PHYS_W_OVERRIDE.get(pde_name, phys_w)
 
     try:
         x_data, y_data = load_data(pde_name, T_in, T_out, dry_run=args.dry_run)
