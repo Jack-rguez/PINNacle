@@ -220,10 +220,7 @@ class HPITConfig(ModelConfig):
     use_fused_ops: bool = True
     compile_model: bool = True
     use_amp: bool = True  # Automatic Mixed Precision
-    # Per-component physics ablation flags (only used when use_physics_layers=True)
-    physics_use_mass: bool = True
-    physics_use_energy: bool = True
-    physics_use_elevation: bool = True
+    pde_name: str = ""  # selects PDE-specific physics sub-networks in PhysicsInformedLayer
 
 
 class MultiScaleAttention(nn.Module):
@@ -309,150 +306,116 @@ class MultiScaleAttention(nn.Module):
 
 
 class PhysicsInformedLayer(nn.Module):
-    """Advanced physics-informed layer with comprehensive snow hydrology constraints."""
+    """Physics-informed layer with PDE-specific learned feature transformations.
 
-    def __init__(self, input_dim: int, hidden_dim: int = 256,
-                 use_mass: bool = True, use_energy: bool = True,
-                 use_elevation: bool = True):
+    Each PDE family gets its own sub-networks that encode the PDE's structural
+    physics (e.g. advection-diffusion balance for Burgers, Laplacian smoothing
+    for Heat) as feature transformations on the embedded representation.
+    These are learned approximators, not explicit PDE solvers.
+    """
+
+    def __init__(self, input_dim: int, hidden_dim: int = 256, pde_name: str = ""):
         super().__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
-        self.use_mass = use_mass
-        self.use_energy = use_energy
-        self.use_elevation = use_elevation
+        self.pde_name = pde_name
 
-        # Enhanced physics constraint networks with GPU-optimized components
-        self.mass_balance_net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            GPUOptimizedLayerNorm(hidden_dim),
-            SwishActivation(),
-            nn.Dropout(0.05),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            GPUOptimizedLayerNorm(hidden_dim // 2),
-            SwishActivation(),
-            nn.Linear(hidden_dim // 2, hidden_dim // 4),
-            GPUOptimizedLayerNorm(hidden_dim // 4),
-            SwishActivation(),
-            nn.Linear(hidden_dim // 4, 1),
-        )
+        def _net():
+            return nn.Sequential(
+                nn.Linear(input_dim, hidden_dim // 2),
+                GPUOptimizedLayerNorm(hidden_dim // 2),
+                SwishActivation(),
+                nn.Linear(hidden_dim // 2, hidden_dim // 4),
+                GPUOptimizedLayerNorm(hidden_dim // 4),
+                SwishActivation(),
+                nn.Linear(hidden_dim // 4, 1),
+            )
 
-        self.energy_balance_net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            GPUOptimizedLayerNorm(hidden_dim),
-            SwishActivation(),
-            nn.Dropout(0.05),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            GPUOptimizedLayerNorm(hidden_dim // 2),
-            SwishActivation(),
-            nn.Linear(hidden_dim // 2, hidden_dim // 4),
-            GPUOptimizedLayerNorm(hidden_dim // 4),
-            SwishActivation(),
-            nn.Linear(hidden_dim // 4, 1),
-        )
+        def _fusion(n_components: int):
+            return nn.Sequential(
+                nn.Linear(n_components, hidden_dim // 4),
+                nn.LayerNorm(hidden_dim // 4),
+                SwishActivation(),
+                nn.Linear(hidden_dim // 4, 1),
+            )
 
-        # Advanced physics networks
-        self.elevation_physics_net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim // 2),
-            nn.LayerNorm(hidden_dim // 2),
-            SwishActivation(),
-            nn.Linear(hidden_dim // 2, hidden_dim // 4),
-            nn.LayerNorm(hidden_dim // 4),
-            SwishActivation(),
-            nn.Linear(hidden_dim // 4, 1),
-        )
-
-        self.seasonal_physics_net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim // 2),
-            nn.LayerNorm(hidden_dim // 2),
-            SinActivation(),  # For seasonal patterns
-            nn.Linear(hidden_dim // 2, hidden_dim // 4),
-            nn.LayerNorm(hidden_dim // 4),
-            SinActivation(),
-            nn.Linear(hidden_dim // 4, 1),
-        )
-
-        # New: Radiation physics network
-        self.radiation_physics_net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim // 2),
-            nn.LayerNorm(hidden_dim // 2),
-            SwishActivation(),
-            nn.Linear(hidden_dim // 2, 1),
-        )
-
-        # New: Precipitation physics network
-        self.precip_physics_net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim // 2),
-            nn.LayerNorm(hidden_dim // 2),
-            nn.ReLU(),  # Non-negative for precipitation
-            nn.Linear(hidden_dim // 2, 1),
-        )
-
-        # Physics constants (learnable parameters with better initialization)
-        self.water_density = nn.Parameter(torch.tensor(1000.0))
-        self.snow_density_base = nn.Parameter(torch.tensor(300.0))
-        self.snow_density_max = nn.Parameter(torch.tensor(600.0))
-        self.latent_heat_fusion = nn.Parameter(torch.tensor(334000.0))
-        self.melt_threshold = nn.Parameter(torch.tensor(0.0))  # Celsius
-        self.albedo_fresh = nn.Parameter(torch.tensor(0.85))
-        self.albedo_old = nn.Parameter(torch.tensor(0.55))
-        
-        # Physics fusion layer
-        self.physics_fusion = nn.Sequential(
-            nn.Linear(6, hidden_dim // 4),  # 6 physics components
-            nn.LayerNorm(hidden_dim // 4),
-            SwishActivation(),
-            nn.Linear(hidden_dim // 4, 1),
-        )
+        if pde_name == "Burgers1D":
+            # u_t + u*u_x - nu*u_xx = 0: nonlinear advection + diffusion
+            self.advection_net = _net()
+            self.diffusion_net = _net()
+            self.physics_fusion = _fusion(2)
+        elif pde_name == "Burgers2D":
+            # vector: u1_t + u1*u1_x + u2*u1_y - nu*lap(u1) = 0, same for u2
+            self.u_advection_net = _net()
+            self.v_advection_net = _net()
+            self.diffusion_net = _net()
+            self.physics_fusion = _fusion(3)
+        elif pde_name == "HeatComplexGeometry":
+            # u_t - u_xx - u_yy = 0: isotropic Laplacian diffusion
+            self.diffusion_x_net = _net()
+            self.diffusion_y_net = _net()
+            self.physics_fusion = _fusion(2)
+        elif pde_name == "KuramotoSivashinsky":
+            # u_t + alpha*u*u_x + beta*u_xx + gamma*u_xxxx = 0
+            # advection (nonlinear), linear instability (u_xx), hyperdiffusion (u_xxxx)
+            self.advection_net = _net()
+            self.instability_net = _net()
+            self.hyperdiffusion_net = _net()
+            self.physics_fusion = _fusion(3)
+        elif pde_name == "NavierStokes2D":
+            # steady: momentum (velocity-pressure coupling), continuity (div-free), pressure
+            self.momentum_net = _net()
+            self.continuity_net = _net()
+            self.pressure_net = _net()
+            self.physics_fusion = _fusion(3)
+        else:
+            # Generic fallback: nonlinear feature + smoothing feature
+            self.feature_net = _net()
+            self.smoothing_net = _net()
+            self.physics_fusion = _fusion(2)
 
     def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Apply comprehensive physics constraints to the input."""
-        zeros = torch.zeros(x.shape[0], 1, device=x.device, dtype=x.dtype)
-        # Core physics constraints — each can be disabled for ablation studies
-        mass_balance    = self.mass_balance_net(x)    if self.use_mass     else zeros
-        energy_balance  = self.energy_balance_net(x)  if self.use_energy   else zeros
-        elevation_effect = self.elevation_physics_net(x) if self.use_elevation else zeros
-        # Seasonal/radiation/precip: zeroed when any component is ablated so
-        # the 6-dim fusion input remains consistent across ablation conditions.
-        ablation_mode = not (self.use_mass and self.use_energy and self.use_elevation)
-        seasonal_effect  = zeros if ablation_mode else self.seasonal_physics_net(x)
-        radiation_effect = zeros if ablation_mode else self.radiation_physics_net(x)
-        precip_effect    = zeros if ablation_mode else self.precip_physics_net(x)
+        """Apply PDE-specific physics feature transformations."""
+        pde = self.pde_name
 
-        # Advanced physics calculations (using learned representations)
-        # Snow density evolution
-        density_factor = torch.sigmoid(mass_balance)
-        snow_density = self.snow_density_base + (self.snow_density_max - self.snow_density_base) * density_factor
-        
-        # Melt rate based on energy balance and temperature
-        melt_rate = torch.relu(energy_balance) * torch.sigmoid(radiation_effect)
-        
-        # Accumulation rate based on precipitation and temperature
-        accumulation = torch.relu(precip_effect) * torch.sigmoid(-seasonal_effect)
-        
-        # Albedo feedback
-        albedo = self.albedo_fresh - (self.albedo_fresh - self.albedo_old) * torch.sigmoid(mass_balance)
-        
-        # Combine all physics components
-        physics_components = torch.cat([
-            mass_balance, energy_balance, elevation_effect, 
-            seasonal_effect, radiation_effect, precip_effect
-        ], dim=-1)
-        
-        physics_integrated = self.physics_fusion(physics_components)
+        if pde == "Burgers1D":
+            adv = self.advection_net(x)
+            dif = self.diffusion_net(x)
+            return {"advection": adv, "diffusion": dif,
+                    "physics_integrated": self.physics_fusion(torch.cat([adv, dif], dim=-1))}
 
-        return {
-            "mass_balance": mass_balance,
-            "energy_balance": energy_balance,
-            "elevation_effect": elevation_effect,
-            "seasonal_effect": seasonal_effect,
-            "radiation_effect": radiation_effect,
-            "precip_effect": precip_effect,
-            "snow_density": snow_density,
-            "melt_rate": melt_rate,
-            "accumulation": accumulation,
-            "albedo": albedo,
-            "physics_integrated": physics_integrated,
-        }
+        elif pde == "Burgers2D":
+            u_adv = self.u_advection_net(x)
+            v_adv = self.v_advection_net(x)
+            dif   = self.diffusion_net(x)
+            return {"u_advection": u_adv, "v_advection": v_adv, "diffusion": dif,
+                    "physics_integrated": self.physics_fusion(torch.cat([u_adv, v_adv, dif], dim=-1))}
+
+        elif pde == "HeatComplexGeometry":
+            dx = self.diffusion_x_net(x)
+            dy = self.diffusion_y_net(x)
+            return {"diffusion_x": dx, "diffusion_y": dy,
+                    "physics_integrated": self.physics_fusion(torch.cat([dx, dy], dim=-1))}
+
+        elif pde == "KuramotoSivashinsky":
+            adv  = self.advection_net(x)
+            inst = self.instability_net(x)
+            hyp  = self.hyperdiffusion_net(x)
+            return {"advection": adv, "instability": inst, "hyperdiffusion": hyp,
+                    "physics_integrated": self.physics_fusion(torch.cat([adv, inst, hyp], dim=-1))}
+
+        elif pde == "NavierStokes2D":
+            mom  = self.momentum_net(x)
+            cont = self.continuity_net(x)
+            pres = self.pressure_net(x)
+            return {"momentum": mom, "continuity": cont, "pressure": pres,
+                    "physics_integrated": self.physics_fusion(torch.cat([mom, cont, pres], dim=-1))}
+
+        else:
+            feat = self.feature_net(x)
+            smth = self.smoothing_net(x)
+            return {"feature": feat, "smoothing": smth,
+                    "physics_integrated": self.physics_fusion(torch.cat([feat, smth], dim=-1))}
 
 
 class HPITModel(BaseTransformer):
@@ -527,9 +490,7 @@ class HPITModel(BaseTransformer):
         if self.config.use_physics_layers:
             self.physics_layer = PhysicsInformedLayer(
                 self.embedding_dim, hidden_dim=self.hidden_dim // 2,
-                use_mass=getattr(self.config, 'physics_use_mass', True),
-                use_energy=getattr(self.config, 'physics_use_energy', True),
-                use_elevation=getattr(self.config, 'physics_use_elevation', True),
+                pde_name=getattr(self.config, 'pde_name', ''),
             )
 
         # Feature interaction networks
