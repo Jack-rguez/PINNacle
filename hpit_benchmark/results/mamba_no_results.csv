@@ -1,0 +1,6 @@
+pde,model,l2rel,run_time_seconds,notes
+Burgers1D,Mamba-NO,0.004979,64277.68,pinnacle_dat
+Burgers2D,Mamba-NO,0.157203,1933.00,pinnacle_dat
+HeatComplexGeometry,Mamba-NO,0.020907,6591.91,pinnacle_dat
+KuramotoSivashinsky,Mamba-NO,0.020304,20400.70,pinnacle_dat
+NavierStokes2D,Mamba-NO,0.925621,27608.57,pinnacle_dat

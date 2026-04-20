@@ -1,0 +1,6 @@
+pde,model,l2rel,l2rel_std,run_time_seconds,notes
+Burgers1D,HPIT,0.011758,0.000000,47.41,pinnacle_dat
+Burgers2D,HPIT,0.249566,0.000000,0.29,pinnacle_dat
+HeatComplexGeometry,HPIT,0.010839,0.000000,35.23,pinnacle_dat
+KuramotoSivashinsky,HPIT,0.050150,0.000000,53.86,pinnacle_dat
+NavierStokes2D,HPIT,0.694335,0.000000,91.93,pinnacle_dat

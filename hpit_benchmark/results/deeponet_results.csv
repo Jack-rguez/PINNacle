@@ -1,0 +1,6 @@
+pde,model,l2rel,run_time_seconds,notes
+Burgers1D,DeepONet,0.066074,2239.31,pinnacle_dat
+Burgers2D,DeepONet,0.271757,30.63,pinnacle_dat
+HeatComplexGeometry,DeepONet,0.372529,71.28,pinnacle_dat
+KuramotoSivashinsky,DeepONet,0.902083,151.38,pinnacle_dat
+NavierStokes2D,DeepONet,0.865800,27.22,pinnacle_dat
