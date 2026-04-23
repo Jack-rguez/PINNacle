@@ -1,0 +1,16 @@
+pde,model,l2rel,run_time_seconds,notes
+Burgers1D,VanillaPINN,0.020342,681.22,pinnacle_pinn
+Burgers2D,VanillaPINN,0.522097,5482.47,pinnacle_pinn
+HeatComplexGeometry,VanillaPINN,0.025439,1690.25,pinnacle_pinn
+KuramotoSivashinsky,VanillaPINN,1.005824,1730.96,pinnacle_pinn
+NavierStokes2D,VanillaPINN,0.050591,973.90,pinnacle_pinn
+Burgers1D,LRA,0.027456,2412.10,pinnacle_pinn_lra
+Burgers2D,LRA,0.465156,24646.43,pinnacle_pinn_lra
+HeatComplexGeometry,LRA,0.129863,6547.10,pinnacle_pinn_lra
+KuramotoSivashinsky,LRA,0.966661,4027.87,pinnacle_pinn_lra
+NavierStokes2D,LRA,-,27.14,failed
+Burgers1D,RAR,0.027538,27.05,pinnacle_pinn_rar|no_converge
+Burgers2D,RAR,0.506702,324.22,pinnacle_pinn_rar|no_converge
+HeatComplexGeometry,RAR,0.032684,110.44,pinnacle_pinn_rar|no_converge
+KuramotoSivashinsky,RAR,1.010065,119.89,pinnacle_pinn_rar|no_converge
+NavierStokes2D,RAR,0.065142,59.88,pinnacle_pinn_rar|no_converge

@@ -4,3 +4,4 @@ Burgers2D,HPIT,0.264218,0.000000,5.00,pinnacle_dat
 HeatComplexGeometry,HPIT,0.010107,0.000000,4.68,pinnacle_dat
 KuramotoSivashinsky,HPIT,0.035677,0.000000,5.28,pinnacle_dat
 NavierStokes2D,HPIT,0.665986,0.000000,9.85,pinnacle_dat
+Burgers1D,HPIT,2.547753,0.000000,2.10,dry_run

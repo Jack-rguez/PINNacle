@@ -587,6 +587,8 @@ def benchmark_pde(pde_name: str, args, device: str):
         # --pde-physics activates the internal PDE-adapted PhysicsInformedLayer.
         use_physics = getattr(args, 'pde_physics', False)
 
+        t_benchmark_start = time.time()
+
         if args.checkpoint and os.path.exists(args.checkpoint):
             logger.info("Checkpoint provided — skipping training, loading weights.")
             model = load_hpit_model(
@@ -596,7 +598,7 @@ def benchmark_pde(pde_name: str, args, device: str):
                 device=device,
                 use_physics=use_physics,
                 pde_name=pde_name,
-                compile_on_cuda=not args.dry_run,
+                compile_on_cuda=False,
             )
             notes_train = "pretrained_ckpt"
         else:
@@ -608,7 +610,7 @@ def benchmark_pde(pde_name: str, args, device: str):
                 device=device,
                 use_physics=use_physics,
                 pde_name=pde_name,
-                compile_on_cuda=not args.dry_run,
+                compile_on_cuda=False,
             )
             ckpt_suffix = "_phys" if use_physics else ""
             ckpt_path = RESULTS_DIR / f"hpit_{pde_name}{ckpt_suffix}.pt"
@@ -637,11 +639,12 @@ def benchmark_pde(pde_name: str, args, device: str):
         preds, l2_rel, inf_time = run_hpit_on_problem(
             model, x_input, y_target, device=device, batch_size=args.batch_size
         )
-        l2_mean = l2_rel
-        l2_std  = 0.0
-        logger.info(f"Test L2={l2_mean:.4f} ({inf_time:.1f}s inference)")
+        l2_mean    = l2_rel
+        l2_std     = 0.0
+        total_time = time.time() - t_benchmark_start
+        logger.info(f"Test L2={l2_mean:.4f} | inference={inf_time:.1f}s | total={total_time:.1f}s")
 
-        save_result(pde_name, l2_mean, l2_std, inf_time, notes=notes_data)
+        save_result(pde_name, l2_mean, l2_std, total_time, notes=notes_data)
 
     except Exception as e:
         logger.error(f"FAILED on {pde_name}: {e}", exc_info=True)
