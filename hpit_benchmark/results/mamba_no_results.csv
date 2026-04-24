@@ -4,3 +4,9 @@ Burgers2D,Mamba-NO,0.157203,1933.00,pinnacle_dat
 HeatComplexGeometry,Mamba-NO,0.020907,6591.91,pinnacle_dat
 KuramotoSivashinsky,Mamba-NO,0.020304,20400.70,pinnacle_dat
 NavierStokes2D,Mamba-NO,0.925621,27608.57,pinnacle_dat
+
+Burgers1D,Mamba-NO,0.001846,65679.76,pinnacle_dat
+Burgers2D,Mamba-NO,0.155092,1856.67,pinnacle_dat
+HeatComplexGeometry,Mamba-NO,0.011160,6492.24,pinnacle_dat
+KuramotoSivashinsky,Mamba-NO,0.012835,15597.10,pinnacle_dat
+NavierStokes2D,Mamba-NO,0.938946,26280.57,pinnacle_dat

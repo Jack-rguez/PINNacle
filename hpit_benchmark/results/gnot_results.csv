@@ -4,3 +4,8 @@ Burgers2D,GNOT,0.269296,34.61,pinnacle_dat
 HeatComplexGeometry,GNOT,0.116628,95.38,pinnacle_dat
 KuramotoSivashinsky,GNOT,1.122753,249.65,pinnacle_dat
 NavierStokes2D,GNOT,0.679940,77.78,pinnacle_dat
+Burgers1D,GNOT,0.043694,4885.87,pinnacle_dat
+Burgers2D,GNOT,0.269495,15.25,pinnacle_dat
+HeatComplexGeometry,GNOT,0.055846,62.54,pinnacle_dat
+KuramotoSivashinsky,GNOT,1.073511,193.84,pinnacle_dat
+NavierStokes2D,GNOT,0.636067,49.96,pinnacle_dat

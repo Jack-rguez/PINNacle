@@ -6,3 +6,8 @@ KuramotoSivashinsky,PINO,0.999995,138.25,pinnacle_dat|phys_w=0.1
 NavierStokes2D,PINO,0.903341,125.05,pinnacle_dat|phys_w=0.1
 KuramotoSivashinsky,PINO,1.003711,103.16,pinnacle_dat|phys_w=0.001
 
+Burgers1D,PINO,0.202273,919.28,pinnacle_dat|phys_w=0.1
+Burgers2D,PINO,0.262485,39.68,pinnacle_dat|phys_w=0.1
+HeatComplexGeometry,PINO,0.063662,77.16,pinnacle_dat|phys_w=0.1
+KuramotoSivashinsky,PINO,0.991558,104.53,pinnacle_dat|phys_w=0.001
+NavierStokes2D,PINO,0.903387,91.03,pinnacle_dat|phys_w=0.1

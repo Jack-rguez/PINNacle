@@ -4,3 +4,14 @@ Burgers2D,FNO,0.198038,39.95,pinnacle_dat
 HeatComplexGeometry,FNO,0.037887,96.76,pinnacle_dat
 KuramotoSivashinsky,FNO,0.170549,38.61,pinnacle_dat
 NavierStokes2D,FNO,0.820781,32.86,pinnacle_dat
+
+Burgers1D,FNO,0.005263,325.11,pinnacle_dat
+Burgers2D,FNO,0.212178,23.93,pinnacle_dat
+HeatComplexGeometry,FNO,0.041339,58.26,pinnacle_dat
+KuramotoSivashinsky,FNO,0.154648,25.19,pinnacle_dat
+NavierStokes2D,FNO,0.820996,18.16,pinnacle_dat
+Burgers1D,FNO,0.003975,319.78,pinnacle_dat
+Burgers2D,FNO,0.185414,22.79,pinnacle_dat
+HeatComplexGeometry,FNO,0.040537,64.40,pinnacle_dat
+KuramotoSivashinsky,FNO,0.167888,27.24,pinnacle_dat
+NavierStokes2D,FNO,0.820955,19.11,pinnacle_dat

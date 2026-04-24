@@ -4,3 +4,8 @@ Burgers2D,DeepONet,0.271757,30.63,pinnacle_dat
 HeatComplexGeometry,DeepONet,0.372529,71.28,pinnacle_dat
 KuramotoSivashinsky,DeepONet,0.902083,151.38,pinnacle_dat
 NavierStokes2D,DeepONet,0.865800,27.22,pinnacle_dat
+Burgers1D,DeepONet,0.070846,1441.72,pinnacle_dat
+Burgers2D,DeepONet,0.270785,9.79,pinnacle_dat
+HeatComplexGeometry,DeepONet,0.451091,19.05,pinnacle_dat
+KuramotoSivashinsky,DeepONet,0.978443,81.85,pinnacle_dat
+NavierStokes2D,DeepONet,0.750760,44.58,pinnacle_dat

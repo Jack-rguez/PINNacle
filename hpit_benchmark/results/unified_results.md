@@ -1,23 +1,23 @@
 # HPIT PDE Benchmark — Unified Results
 
 L2 relative error: `||u_pred - u_true||_2 / ||u_true||_2`
-Lower is better. `-` = run failed. `†` = did not converge (success_rate=0).
+Lower is better.  `nan` = no checkpoint (random weights).
+`see_paper` = value reported in the source paper.
+`pending` = benchmark run not yet complete.
+`-` = not tested.
 
 | Model | Burgers1D | Burgers2D | HeatComplexGeometry | KuramotoSivashinsky | NavierStokes2D |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| VanillaPINN | 0.0203 | 0.5221 | 0.0254 | 1.0058 | 0.0506 |
-| LRA | 0.0275 | 0.4652 | 0.1299 | 0.9667 | - |
-| RAR † | 0.0275 | 0.5067 | 0.0327 | 1.0101 | 0.0651 |
-| DeepONet | 0.0661 | 0.2718 | 0.3725 | 0.9021 | 0.8658 |
-| FNO | 0.0034 | 0.1980 | 0.0379 | 0.1705 | 0.8208 |
-| GNOT | 0.0403 | 0.2693 | 0.1166 | 1.1228 | 0.6799 |
-| PINO | 0.2022 | 0.2572 | 0.0659 | 1.0000 | 0.9033 |
-| Mamba-NO | 0.0050 | 0.1572 | 0.0209 | **0.0203** | 0.9256 |
-| HPIT | 0.0156 | 0.2642 | **0.0101** | 0.0357 | **0.6660** |
+| 04.23-07.05.41-vanilla_pinn | 0.0201 | 0.5178 | - | - | - |
+| 04.23-10.01.15-pinn_lra | 0.0350 | 0.4795 | - | - | - |
+| 04.23-21.37.23-rar | 0.0433 | 0.5082 | - | - | - |
+| DeepONet | 0.0708 | 0.2708 | 0.4511 | 0.9784 | 0.7508 |
+| FNO | 0.0040 | 0.1854 | 0.0405 | 0.1679 | 0.8210 |
+| GNOT | 0.0437 | 0.2695 | 0.0558 | 1.0735 | 0.6361 |
+| HPIT | 2.1176 | 0.3195 | 0.9256 | 0.8854 | 0.9201 |
 | HPIT (no physics) | 0.0118 | 0.2496 | 0.0108 | 0.0502 | 0.6943 |
-
-† RAR: success_rate=0 on all PDEs — values present but run did not meet convergence criteria.
-NS2D note: all models trained on ≤5 parametric conditions (7 total, 80/20 split). VanillaPINN/RAR solve a single instance directly rather than learning an operator, making NS comparison not directly equivalent.
+| Mamba-NO | 0.0050 | 0.1572 | 0.0209 | 0.0203 | 0.9256 |
+| PINO | 0.2023 | 0.2625 | 0.0637 | 0.9916 | 0.9034 |
 
 ## Sources
 - PINNacle: Hao et al., NeurIPS 2024 — https://arxiv.org/abs/2306.08827
